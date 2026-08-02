@@ -51,15 +51,42 @@ You'll need an **App Store Connect API key with the Sales and Reports role** —
 Vantage neither needs nor wants one — and your **Vendor Number** (App Store Connect › Payments and
 Financial Reports, top left).
 
-Enter the Issuer ID, Key ID, `.p8` file and Vendor Number in Settings. They go straight into the
-macOS Keychain. [SECURITY.md](SECURITY.md) documents exactly what that key can access and where it
-lives.
+All four values are required: **Issuer ID**, **Key ID**, the **`.p8` file**, and the **Vendor
+Number**. Enter them in Settings and they go straight into the macOS Keychain.
+[SECURITY.md](SECURITY.md) documents exactly what that key can access and where it lives.
+
+The Issuer ID and Key ID are both on App Store Connect's Users and Access › Integrations page — the
+Issuer ID at the top, the Key ID in the column beside your key's name. The `.p8` is the file you
+downloaded when you created the key; Apple lets you download it exactly once.
+
+> [!NOTE]
+> Setup is currently a single form that assumes you already know what those four things are. A
+> guided first-run walkthrough is on the roadmap — see
+> [Onboarding](#onboarding-is-not-there-yet) below.
+
+## Onboarding is not there yet
+
+The v0.1 Settings window is a form with four fields. If you already have an App Store Connect API
+key it takes a minute; if you don't, it assumes knowledge it shouldn't — it doesn't explain what an
+Issuer ID is, doesn't say all four values are needed before anything works, doesn't walk you through
+creating a Sales and Reports key, and doesn't tell you whether the credentials you just entered are
+actually valid until the next fetch either succeeds or doesn't.
+
+What it should be is a proper first-run walkthrough: one step per value, with a screenshot of where
+each lives in App Store Connect, an explicit "create the key with this role, not that one" step, and
+a **Test connection** button that makes one real request and reports back before you're left
+guessing. Credential errors should say which value looks wrong rather than "App Store Connect
+rejected the key".
+
+That's the single biggest gap in v0.1 and it's tracked as a
+[good first issue](../../issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
 ## Roadmap
 
 Deliberately small for v0.1. These are filed as
 [good first issues](../../issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22):
 
+- **A guided setup walkthrough**, replacing the four-field form — the biggest known gap
 - A RevenueCat provider, for near-real-time revenue
 - A weekly digest notification
 - A sparkline of the last 30 days in the dropdown

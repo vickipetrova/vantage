@@ -90,6 +90,26 @@ The alternative is piping through `/usr/bin/gunzip`. That's less code and it put
 figures through a subprocess's stdout, where it can land in a crash log or be read by anything
 watching the process tree. Not worth it for the page of code saved.
 
+## Known gap: onboarding
+
+`SettingsWindow` is a four-field form, and it is the weakest part of v0.1. It assumes the user
+already knows what an Issuer ID is and where to find it, and gives no feedback on whether the
+credentials work until a fetch either succeeds or doesn't.
+
+Planned replacement, tracked as a `good first issue` and described in the README: a step-by-step
+first-run walkthrough with one value per step, a screenshot of where each lives in App Store
+Connect, an explicit "Sales and Reports role, not Admin" step, and a **Test connection** button that
+makes one real request and reports the result immediately. Credential errors should name the value
+that looks wrong instead of the generic "App Store Connect rejected the key".
+
+Two things that are easy to break here and were fixed the hard way:
+
+- **⌘V needs `MainMenu.install()`.** An accessory app has no menu bar of its own, and AppKit
+  dispatches keyboard shortcuts by matching main-menu items — with no Edit menu, `paste:` reaches
+  nothing and the fields silently refuse to paste. Nobody types an Issuer ID by hand.
+- **The `.p8` is never displayed**, only reported as present or absent, so it can't end up in a
+  screenshot attached to a bug report.
+
 ## Known constraint: notifications
 
 macOS refuses notification registration for ad-hoc signed bundles — `requestAuthorization` returns

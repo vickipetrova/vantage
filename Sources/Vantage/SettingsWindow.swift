@@ -34,7 +34,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     private func build() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 400),
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false)
         window.title = "Vantage Settings"
@@ -51,7 +51,8 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
         stack.addArrangedSubview(heading("App Store Connect"))
         stack.addArrangedSubview(caption(
-            "Create a key with the Sales and Reports role. Vantage never needs an Admin key."))
+            "All four values are required. Create the key with the Sales and Reports role — "
+            + "Vantage never needs an Admin key."))
 
         // A borderless link rather than a button: an inline-bezel button on the window background
         // reads as disabled, and this is a pointer to Apple's docs, not an action of the app's.
@@ -69,6 +70,9 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         stack.addArrangedSubview(field("Issuer ID", issuerField,
                                        placeholder: "57246542-96fe-1a63-e053-0824d011072a"))
         stack.addArrangedSubview(field("Key ID", keyIDField, placeholder: "2X9R4HXF34"))
+        stack.addArrangedSubview(caption(
+            "Both are on the Users and Access › Integrations page. The Issuer ID is at the top of "
+            + "that page; the Key ID is the column next to your key's name."))
 
         let keyRow = NSStackView()
         keyRow.orientation = .horizontal
