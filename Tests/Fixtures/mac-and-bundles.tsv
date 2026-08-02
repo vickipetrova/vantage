@@ -1,0 +1,8 @@
+Provider	Provider Country	SKU	Developer	Title	Version	Product Type Identifier	Units	Developer Proceeds	Begin Date	End Date	Customer Currency	Country Code	Currency of Proceeds	Apple Identifier	Customer Price	Promo Code	Parent Identifier	Subscription	Period	Category	CMB	Device	Supported Platforms	Proceeds Reason	Preserved Pricing	Client	Order Type
+APPLE	US	APPONE	Test Developer	App One	1.0	F1	10	5.00	08/01/2026	08/01/2026	USD	US	USD	1111111111	0.99					Utilities		iPhone	iOS				
+APPLE	US	APPONE	Test Developer	App One	1.0	F1-B	2	10.00	08/01/2026	08/01/2026	USD	US	USD	1111111111	0.99					Utilities		iPhone	iOS				
+APPLE	US	APPONE	Test Developer	App One	1.0	1-B	3	2.00	08/01/2026	08/01/2026	USD	US	USD	1111111111	0.99					Utilities		iPhone	iOS				
+APPLE	US	APPONE	Test Developer	App One	1.0	1E	1	100.00	08/01/2026	08/01/2026	USD	US	USD	1111111111	0.99					Utilities		iPhone	iOS				
+APPLE	US	APPONE	Test Developer	App One	1.0	1T	5	1.00	08/01/2026	08/01/2026	USD	US	USD	1111111111	0.99					Utilities		iPhone	iOS				
+APPLE	US	APPONE	Test Developer	App One	1.0	1EU	2	50.00	08/01/2026	08/01/2026	USD	US	USD	1111111111	0.99					Utilities		iPhone	iOS				
+APPLE	US	APPONE	Test Developer	App One	1.0	1EP	1	25.00	08/01/2026	08/01/2026	USD	US	USD	1111111111	0.99					Utilities		iPhone	iOS				

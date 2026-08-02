@@ -7,9 +7,7 @@ import Foundation
 /// deliberately coarse (`SalesError`) so that nothing Apple returns in a body can end up rendered
 /// in the menu or pasted into a GitHub issue.
 ///
-/// `SalesProvider` conformance lands with `ReportParser` in Phase 3; until then the useful entry
-/// point is `fetchTSV`, which is also what the network path is debugged through.
-public struct ASCClient {
+public struct ASCClient: SalesProvider {
     public let name = "App Store Connect"
 
     private static let host = "api.appstoreconnect.apple.com"
@@ -33,10 +31,18 @@ public struct ASCClient {
 
     // MARK: - Fetch
 
+    public func fetch(_ date: ReportDate, completion: @escaping (Result<DaySales?, Error>) -> Void) {
+        fetchTSV(date) { result in
+            completion(result.map { tsv in
+                tsv.map { ReportParser.parse($0, date: date, fetchedAt: Date()) }
+            })
+        }
+    }
+
     /// The raw decompressed report, or nil when Apple has no report for that date.
     ///
-    /// Kept separate from the eventual `fetch` so the network path and the parsing path fail
-    /// independently and can be debugged independently.
+    /// Kept separate from `fetch` so the network path and the parsing path fail independently and
+    /// can be debugged independently.
     public func fetchTSV(_ date: ReportDate,
                          completion: @escaping (Result<String?, Error>) -> Void) {
         guard let credentials = credentialsProvider() else {
