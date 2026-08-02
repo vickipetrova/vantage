@@ -293,4 +293,21 @@ final class ReportParserTests: XCTestCase {
         XCTAssertEqual(day.apps.first?.proceeds["USD"], decimal("17.15"))
         XCTAssertEqual(day.downloads, 0)
     }
+
+    /// The invariant that keeps a breakdown honest: per-app rows and the day above them must count
+    /// the same units, whichever metrics are on.
+    func testPerAppUnitsReconcileWithTheDayForEveryMetricCombination() throws {
+        for name in ["typical-day.tsv", "free-apps-blank-currency.tsv", "orphan-iap.tsv",
+                     "mac-and-bundles.tsv", "updates-and-redownloads.tsv", "refunds.tsv"] {
+            let day = try parse(name)
+            for metrics in [Set<Metric>([.installs]),
+                            [.installs, .inAppPurchases],
+                            [.inAppPurchases, .subscriptions],
+                            Set(Metric.allCases)] {
+                let perApp = day.apps.reduce(Decimal(0)) { $0 + Metric.units(in: $1, metrics: metrics) }
+                XCTAssertEqual(perApp, Metric.units(in: day, metrics: metrics),
+                               "\(name) with \(metrics.map(\.rawValue).sorted())")
+            }
+        }
+    }
 }

@@ -144,7 +144,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         let ranked = latest.apps.sorted { converted($0.proceeds).converted > converted($1.proceeds).converted }
         for app in ranked.prefix(Self.appRowLimit) {
             let money = converted(app.proceeds).converted
-            let units = app.downloads
+            let units = Metric.units(in: app, metrics: Prefs.metrics)
             menu.addItem(row("\(app.title)   \(approx(money)) · \(Fmt.downloadsWithArrow(units))"))
         }
         if ranked.count > Self.appRowLimit {

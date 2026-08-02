@@ -93,11 +93,31 @@ public struct AppSales: Equatable, Codable, Sendable {
     public let downloads: Decimal
     public let proceeds: [String: Decimal]
 
-    public init(appleID: String, title: String, downloads: Decimal, proceeds: [String: Decimal]) {
+    /// This app's own units per product type, including the ones its In-App Purchases contributed.
+    ///
+    /// Carried per app for the same reason it's carried per day: the row has to be able to answer
+    /// for whichever metrics are switched on. Without it the per-app rows count installs while the
+    /// day above them counts something else, and a breakdown that doesn't sum to its own total is
+    /// worse than no breakdown.
+    public let unitsByProductType: [String: Decimal]
+
+    public init(appleID: String, title: String, downloads: Decimal,
+                proceeds: [String: Decimal], unitsByProductType: [String: Decimal] = [:]) {
         self.appleID = appleID
         self.title = title
         self.downloads = downloads
         self.proceeds = proceeds
+        self.unitsByProductType = unitsByProductType
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        appleID = try container.decode(String.self, forKey: .appleID)
+        title = try container.decode(String.self, forKey: .title)
+        downloads = try container.decode(Decimal.self, forKey: .downloads)
+        proceeds = try container.decode([String: Decimal].self, forKey: .proceeds)
+        unitsByProductType = try container.decodeIfPresent(
+            [String: Decimal].self, forKey: .unitsByProductType) ?? [:]
     }
 }
 

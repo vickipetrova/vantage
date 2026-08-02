@@ -100,4 +100,14 @@ public enum Metric: String, CaseIterable, Codable, Sendable {
     public static func units(in days: [DaySales], metrics: Set<Metric>) -> Decimal {
         days.reduce(Decimal(0)) { $0 + units(in: $1, metrics: metrics) }
     }
+
+    /// The same question for one app's row, so a breakdown always sums to the total above it.
+    public static func units(in app: AppSales, metrics: Set<Metric>) -> Decimal {
+        guard !app.unitsByProductType.isEmpty else {
+            return metrics.contains(.installs) ? app.downloads : 0
+        }
+        return app.unitsByProductType.reduce(Decimal(0)) { total, entry in
+            metrics.contains(where: { $0.contains(entry.key) }) ? total + entry.value : total
+        }
+    }
 }
