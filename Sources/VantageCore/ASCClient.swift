@@ -88,15 +88,21 @@ public struct ASCClient {
                 completion(.success(nil))
 
             case 401:
-                completion(.failure(SalesError.unauthorized))
+                completion(.failure(SalesError.unauthorized(detail: detail(data, credentials))))
             case 403:
-                completion(.failure(SalesError.forbidden))
+                completion(.failure(SalesError.forbidden(detail: detail(data, credentials))))
             case 429:
                 completion(.failure(SalesError.rateLimited))
             default:
-                completion(.failure(SalesError.http(http.statusCode)))
+                completion(.failure(SalesError.http(http.statusCode,
+                                                    detail: detail(data, credentials))))
             }
         }.resume()
+    }
+
+    /// Apple's explanation for a refusal, with the vendor number taken out of it.
+    private func detail(_ data: Data, _ credentials: Credentials) -> String? {
+        ASCErrorBody.summary(from: data, redacting: credentials.vendorNumber)
     }
 
     // MARK: - The request
