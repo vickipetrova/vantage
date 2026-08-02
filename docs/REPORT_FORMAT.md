@@ -207,6 +207,26 @@ itself. Days derived from an actual 200 are immutable and are never re-fetched, 
 Vantage must never render a "not published yet" as `$0 · 0↓`, and never leave a real zero day
 looking like a permanent loading state.
 
+## The agreement gate
+
+Before any of the above matters, the account needs an **Active Paid Applications agreement**. Sales
+reports are gated on it, and the key's role has nothing to do with it — an account without one gets:
+
+```
+HTTP 403
+This request requires an in-effect agreement that has not been signed or has expired.
+```
+
+which reads exactly like a permissions problem and sends you to inspect the API key, where there is
+nothing to find. Surfacing Apple's own `detail` string rather than guessing at a 403's meaning is
+the only reason this was diagnosable at all.
+
+Signing is not the same as being in effect. Apple's agreement statuses: `New`, `Pending User Info`
+(signed, but tax or banking details are outstanding), `Processing`, `Verifying`, `Active`,
+`Active (Pending User)`, `Expired`, `Disabled`. Only `Active` and `Active (Pending User)` are in
+effect. The status lives in App Store Connect › Business › Agreements, and reaching it needs the
+Account Holder, Admin or Finance role.
+
 ## Currency
 
 `Currency of Proceeds` is the currency you're *paid* in for that storefront's region, and one day's

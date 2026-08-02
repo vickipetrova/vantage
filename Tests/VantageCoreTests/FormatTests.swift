@@ -57,6 +57,38 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Fmt.downloadsWithArrow(Decimal(89)), "89↓")
     }
 
+    // MARK: - Wrapping
+
+    /// NSMenu never wraps and sizes to its widest item, so an unwrapped error sentence stretches
+    /// the dropdown across the entire screen.
+    func testWrapKeepsEveryLineWithinTheLimit() {
+        let message = "This request requires an in-effect agreement that has not been signed "
+            + "or has expired. Sign it in App Store Connect › Business (Account Holder only)."
+        let lines = Fmt.wrap(message, width: 46)
+        XCTAssertGreaterThan(lines.count, 1)
+        for line in lines { XCTAssertLessThanOrEqual(line.count, 46, line) }
+    }
+
+    func testWrapLosesNoWords() {
+        let message = "Invalid vendor number specified for this request."
+        XCTAssertEqual(Fmt.wrap(message, width: 12).joined(separator: " "), message)
+    }
+
+    func testWrapLeavesShortTextAlone() {
+        XCTAssertEqual(Fmt.wrap("Fetching…"), ["Fetching…"])
+    }
+
+    func testWrapDoesntChopALongUnbrokenToken() {
+        // A filesystem path with no spaces: better one over-long row than an unreadable one split
+        // mid-path.
+        let path = "~/Library/Application_Support/Vantage/raw/2026-08-01.tsv"
+        XCTAssertEqual(Fmt.wrap(path, width: 20), [path])
+    }
+
+    func testWrapHandlesEmptyText() {
+        XCTAssertEqual(Fmt.wrap(""), [""])
+    }
+
     // MARK: - Dates
 
     /// The dropdown's date must name the Pacific report day, not the viewer's local day at that

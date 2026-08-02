@@ -28,7 +28,7 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     func showNoCredentials() {
         title = "–"
-        lines = [SalesError.noCredentials.errorDescription ?? ""]
+        lines = Fmt.wrap(SalesError.noCredentials.errorDescription ?? "")
         render()
     }
 
@@ -40,7 +40,10 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     func show(error: Error) {
         title = "!"
-        lines = [(error as? SalesError)?.errorDescription ?? "Something went wrong."]
+        // Plus a timestamp: without it, pressing Refresh Now on a failure looks like it did
+        // nothing at all, because the message it redraws is identical to the one it replaced.
+        lines = Fmt.wrap((error as? SalesError)?.errorDescription ?? "Something went wrong.")
+            + ["Checked \(Fmt.clock(Date()))"]
         render()
     }
 
@@ -51,8 +54,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         lines = [
             "Report for \(Fmt.reportDate(date))",
             "\(lineCount) lines · fetched \(Fmt.clock(Date()))",
-            "Saved to \(path)",
-        ]
+        ] + Fmt.wrap("Saved to \(path)")
         render()
     }
 

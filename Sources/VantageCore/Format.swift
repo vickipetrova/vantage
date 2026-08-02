@@ -63,6 +63,36 @@ public enum Fmt {
         downloads(units) + downloadArrow
     }
 
+    // MARK: - Menu text
+
+    /// Breaks a long message into menu-width lines.
+    ///
+    /// `NSMenu` sizes itself to its widest item and never wraps, so a single long sentence stretches
+    /// the dropdown clear across the screen. Apple's error strings are long sentences. Wrapping at a
+    /// fixed column keeps a menu the width of a menu.
+    ///
+    /// Measured in characters rather than points, which is approximate — but the menu is one font
+    /// at one size, and being roughly right here is worth more than the layout pass it would take
+    /// to be exactly right.
+    public static func wrap(_ text: String, width: Int = 46) -> [String] {
+        var lines: [String] = []
+        var current = ""
+        for word in text.split(separator: " ", omittingEmptySubsequences: true) {
+            if current.isEmpty {
+                current = String(word)
+            } else if current.count + 1 + word.count <= width {
+                current += " " + word
+            } else {
+                lines.append(current)
+                current = String(word)
+            }
+        }
+        if !current.isEmpty { lines.append(current) }
+        // A single word longer than the limit — a filesystem path, typically — is left whole
+        // rather than chopped mid-token, which would make it unreadable and unselectable.
+        return lines.isEmpty ? [text] : lines
+    }
+
     // MARK: - Dates
 
     /// A report date, written the way the reader's region writes dates. Medium style, so
