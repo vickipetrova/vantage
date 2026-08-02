@@ -3,15 +3,18 @@ import VantageCore
 
 /// Owns the status item: the title in the menu bar and the dropdown behind it.
 ///
-/// Knows nothing about App Store Connect. It is handed `DaySales` values and renders them, so a
-/// second `SalesProvider` is a matter of writing one file — keep provider-specific strings out.
+/// Knows nothing about App Store Connect. It is handed values and renders them, so a second
+/// `SalesProvider` is a matter of writing one file — keep provider-specific strings out.
 final class MenuController: NSObject, NSMenuDelegate {
+    var onRefresh: (() -> Void)?
+    var onSettings: (() -> Void)?
+
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
 
     /// The pre-first-report title from the plan: not loading, not an error, just nothing yet.
     private var title = "–"
-    private var detail = "Loading…"
+    private var lines: [String] = ["Loading…"]
 
     override init() {
         super.init()
@@ -21,9 +24,41 @@ final class MenuController: NSObject, NSMenuDelegate {
         render()
     }
 
+    // MARK: - Input
+
     func showNoCredentials() {
         title = "–"
-        detail = SalesError.noCredentials.errorDescription ?? ""
+        lines = [SalesError.noCredentials.errorDescription ?? ""]
+        render()
+    }
+
+    func showLoading() {
+        title = "…"
+        lines = ["Fetching…"]
+        render()
+    }
+
+    func show(error: Error) {
+        title = "!"
+        lines = [(error as? SalesError)?.errorDescription ?? "Something went wrong."]
+        render()
+    }
+
+    /// Phase 2 only: enough of a dropdown to confirm a real report arrived and landed on disk.
+    /// Replaced by the real rendering once `ReportParser` and `ReportStore` exist.
+    func showRawReport(date: ReportDate, lineCount: Int, path: String) {
+        title = "✓"
+        lines = [
+            "Report for \(Fmt.reportDate(date))",
+            "\(lineCount) lines · fetched \(Fmt.clock(Date()))",
+            "Saved to \(path)",
+        ]
+        render()
+    }
+
+    func showNoReportYet(date: ReportDate) {
+        title = "–"
+        lines = ["No report for \(Fmt.reportDate(date)) yet."]
         render()
     }
 
@@ -38,8 +73,10 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        menu.addItem(row(detail))
+        for line in lines { menu.addItem(row(line)) }
         menu.addItem(.separator())
+        menu.addItem(action("Refresh Now", key: "r", selector: #selector(refreshClicked)))
+        menu.addItem(action("Settings…", key: ",", selector: #selector(settingsClicked)))
         menu.addItem(action("Quit Vantage", key: "q", selector: #selector(quitClicked)))
     }
 
@@ -56,5 +93,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         return item
     }
 
+    @objc private func refreshClicked() { onRefresh?() }
+    @objc private func settingsClicked() { onSettings?() }
     @objc private func quitClicked() { NSApp.terminate(nil) }
 }
