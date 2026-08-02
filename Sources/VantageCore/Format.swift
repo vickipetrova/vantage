@@ -63,6 +63,21 @@ public enum Fmt {
         downloads(units) + downloadArrow
     }
 
+    /// A day against a baseline: `▲ 24%`, `▼ 8%`, or `—` when there's nothing to compare with.
+    ///
+    /// Percentages of a zero baseline are undefined, not infinite, and a day's first sale is not a
+    /// hundred-percent rise — so those cases say "new" rather than inventing a number.
+    public static func change(from baseline: Decimal, to value: Decimal) -> String {
+        guard baseline != 0 else { return value == 0 ? "—" : "new" }
+        let ratio = (value - baseline) / abs(baseline) * 100
+        let rounded = NSDecimalNumber(decimal: ratio).rounding(
+            accordingToBehavior: NSDecimalNumberHandler(
+                roundingMode: .plain, scale: 0, raiseOnExactness: false, raiseOnOverflow: false,
+                raiseOnUnderflow: false, raiseOnDivideByZero: false)).intValue
+        if rounded == 0 { return "— level" }
+        return rounded > 0 ? "▲ \(rounded)%" : "▼ \(abs(rounded))%"
+    }
+
     // MARK: - Menu text
 
     /// Breaks a long message into menu-width lines.

@@ -34,18 +34,24 @@ public enum ReportParser {
         }
 
         let columns = Columns(header: headerLine)
-        var totals = Totals()
+        var rows: [Row] = []
+        var skipped = 0
 
         for line in lines.dropFirst() {
             if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
             guard let row = columns.row(from: fields) else {
-                totals.skipped += 1
+                skipped += 1
                 continue
             }
-            totals.add(row)
+            rows.append(row)
         }
 
+        // Two passes, because an In-App Purchase row names its parent app by SKU and the mapping
+        // from SKU to Apple Identifier only exists on the app's own rows — which may come after it.
+        var totals = Totals(parents: Self.parentIndex(rows))
+        totals.skipped = skipped
+        for row in rows { totals.add(row) }
         return totals.day(date: date, fetchedAt: fetchedAt)
     }
 
@@ -64,6 +70,8 @@ public enum ReportParser {
         let currency: Int?
         let title: Int?
         let appleID: Int?
+        let sku: Int?
+        let parentID: Int?
 
         init(header: Substring) {
             var indices: [String: Int] = [:]
@@ -78,6 +86,8 @@ public enum ReportParser {
             currency = indices["currencyofproceeds"]
             title = indices["title"]
             appleID = indices["appleidentifier"]
+            sku = indices["sku"]
+            parentID = indices["parentidentifier"]
         }
 
         /// Lowercased, with everything that isn't a letter or digit removed — so "Developer
@@ -113,6 +123,10 @@ public enum ReportParser {
                 title: (title.flatMap { Self.field(fields, $0) } ?? "")
                     .trimmingCharacters(in: .whitespaces),
                 appleID: (appleID.flatMap { Self.field(fields, $0) } ?? "")
+                    .trimmingCharacters(in: .whitespaces),
+                sku: (sku.flatMap { Self.field(fields, $0) } ?? "")
+                    .trimmingCharacters(in: .whitespaces),
+                parentID: (parentID.flatMap { Self.field(fields, $0) } ?? "")
                     .trimmingCharacters(in: .whitespaces))
         }
 
@@ -129,6 +143,21 @@ public enum ReportParser {
         }
     }
 
+    /// SKU → (Apple Identifier, Title) for every row that is an app rather than an In-App Purchase.
+    ///
+    /// An IAP row carries its own Apple Identifier — the purchase's, not the app's — and names its
+    /// app only through `Parent Identifier`, which holds the app's **SKU**. Without this index the
+    /// per-app breakdown lists every in-app purchase as though it were a separate app, and the
+    /// app that actually earned the money shows nothing.
+    private static func parentIndex(_ rows: [Row]) -> [String: (appleID: String, title: String)] {
+        var index: [String: (appleID: String, title: String)] = [:]
+        for row in rows where row.parentID.isEmpty && !row.sku.isEmpty && !row.appleID.isEmpty {
+            // First writer wins: an app's own rows all agree, and a later IAP row can't overwrite.
+            if index[row.sku] == nil { index[row.sku] = (row.appleID, row.title) }
+        }
+        return index
+    }
+
     private struct Row {
         let productType: String
         let units: Decimal
@@ -136,6 +165,9 @@ public enum ReportParser {
         let currency: String
         let title: String
         let appleID: String
+        let sku: String
+        /// The SKU of the app this In-App Purchase belongs to. Empty for app rows.
+        let parentID: String
 
         /// Refund rows carry negative units and positive per-unit proceeds, so this subtracts on
         /// its own. Never take an absolute value of either half.
@@ -147,15 +179,32 @@ public enum ReportParser {
     // MARK: - Accumulation
 
     private struct Totals {
+        let parents: [String: (appleID: String, title: String)]
         var downloads: Decimal = 0
         var proceeds: [String: Decimal] = [:]
         var apps: [String: (title: String, downloads: Decimal, proceeds: [String: Decimal])] = [:]
         var unitsByType: [String: Decimal] = [:]
         var skipped = 0
 
+        /// Which app a row's money belongs to.
+        ///
+        /// An In-App Purchase belongs to the app that sold it, not to itself — otherwise the
+        /// breakdown lists purchase products where apps should be, and the app that earned the
+        /// money reads as zero. When the parent isn't in the report at all (it earned nothing that
+        /// day), the purchases still group together under the parent's SKU rather than scattering.
+        private func owner(of row: Row) -> (key: String, title: String)? {
+            if !row.parentID.isEmpty {
+                if let parent = parents[row.parentID] {
+                    return (parent.appleID, parent.title)
+                }
+                return (row.parentID, row.parentID)
+            }
+            let key = row.appleID.isEmpty ? row.title : row.appleID
+            return key.isEmpty ? nil : (key, row.title)
+        }
+
         mutating func add(_ row: Row) {
             let amount = row.proceeds
-            let key = row.appleID.isEmpty ? row.title : row.appleID
 
             if !row.productType.isEmpty { unitsByType[row.productType, default: 0] += row.units }
             if row.isDownload { downloads += row.units }
@@ -171,8 +220,8 @@ public enum ReportParser {
                 proceeds[row.currency, default: 0] += amount
             }
 
-            guard !key.isEmpty else { return }
-            var app = apps[key] ?? (title: row.title, downloads: 0, proceeds: [:])
+            guard let owner = owner(of: row) else { return }
+            var app = apps[owner.key] ?? (title: owner.title, downloads: 0, proceeds: [:])
             // Prefer the title from a download row: In-App Purchase rows put the product ID in the
             // Title column, which is not the app's name.
             if row.isDownload, !row.title.isEmpty { app.title = row.title }
@@ -180,7 +229,7 @@ public enum ReportParser {
             if amount != 0, !row.currency.isEmpty {
                 app.proceeds[row.currency, default: 0] += amount
             }
-            apps[key] = app
+            apps[owner.key] = app
         }
 
         func day(date: ReportDate, fetchedAt: Date) -> DaySales {

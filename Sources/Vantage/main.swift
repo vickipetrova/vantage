@@ -1,19 +1,21 @@
 import AppKit
 import VantageCore
 
-/// Wiring: a provider, a cache, and the backfill that fills the gap between them.
-///
-/// Phase 3 state: the dropdown lists each cached day with its totals, so the numbers can be checked
-/// against App Store Connect line by line. Phase 4 replaces that with the real design — menu bar
-/// title, per-app rows, 7- and 30-day windows, currency conversion, and the scheduler.
+/// Wiring: a provider, a cache, exchange rates, and a timer that only fires when Apple might
+/// actually have something new.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuController = MenuController()
     private let settingsWindow = SettingsWindow()
     private let store = ReportStore()
+    private let fx = FX()
     private let backfill: Backfill
 
-    /// How far back the first run reaches. Thirty days covers the 7- and 30-day windows the menu
-    /// shows, and Apple keeps daily reports for a year, so a wider net is possible but pointless.
+    private var rates: FXRates?
+    private var pollTimer: Timer?
+    private var isFetching = false
+
+    /// How far back the first run reaches. Enough for the 7- and 30-day rows and no further; Apple
+    /// keeps daily reports for a year, so a wider net is possible but pointless.
     private static let backfillDays = 30
 
     override init() {
@@ -27,7 +29,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menuController.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
         menuController.onSettings = { [weak self] in self?.settingsWindow.show() }
+        menuController.onMetricsChanged = { [weak self] in self?.render() }
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
+        settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
+        settingsWindow.testConnection = { [weak self] completion in
+            self?.testConnection(completion) }
+
+        Notifier.requestAuthorizationIfNeeded()
+        rates = fx.cached()  // Whatever's on disk, so the first render isn't blank.
 
         guard KeychainStore.hasCredentials else {
             // First launch: nothing to show and nothing to fetch, so open the one window that
@@ -36,45 +45,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow.show()
             return
         }
-        showCached()
+        render()
         refresh(userInitiated: false)
+
+        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
+        // window it slept through. Ask again the moment it wakes.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
     }
+
+    @objc private func didWake() { refresh(userInitiated: false) }
+
+    private func preferencesChanged() {
+        Notifier.requestAuthorizationIfNeeded()
+        render()
+    }
+
+    // MARK: - Rendering
 
     private var window: [ReportDate] { ReportDate.yesterday().lastDays(Self.backfillDays) }
 
-    /// Renders whatever is already on disk. Instant, offline, and the reason a relaunch doesn't
-    /// stare blankly while thirty requests go out.
-    private func showCached() {
-        let days = store.loadAll(window)
-        if days.isEmpty {
-            menuController.showLoading()
-        } else {
-            menuController.show(days: days)
-        }
+    /// Renders from disk. Instant, offline, and the reason a relaunch or a metric toggle doesn't
+    /// wait on the network.
+    private func render(error: Error? = nil) {
+        menuController.update(days: store.loadAll(window), rates: rates, error: error)
     }
+
+    // MARK: - Fetching
 
     private func refresh(userInitiated: Bool) {
         guard KeychainStore.hasCredentials else {
             menuController.showNoCredentials()
             return
         }
-        backfill.run(dates: window, userInitiated: userInitiated, onDay: { _ in
-            // Each day lands independently, so the menu fills in as they arrive rather than
-            // staying empty until the last request returns.
-            DispatchQueue.main.async { [weak self] in self?.showCached() }
-        }, completion: { error in
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                let days = self.store.loadAll(self.window)
-                if let error, days.isEmpty {
-                    self.menuController.show(error: error)
-                } else {
-                    // Some days are on screen, so a failure on one of them is a footnote rather
-                    // than a reason to blank everything out.
-                    self.menuController.show(days: days, warning: error)
+        guard !isFetching else { return }  // Refresh Now during a backfill shouldn't double it.
+        isFetching = true
+
+        refreshRates { [weak self] in
+            guard let self else { return }
+            self.backfill.run(dates: self.window, userInitiated: userInitiated, onDay: { day in
+                DispatchQueue.main.async {
+                    // Days land independently, so the menu fills in as they arrive.
+                    self.render()
+                    Notifier.announce(day, rates: self.rates)
+                }
+            }, completion: { error in
+                DispatchQueue.main.async {
+                    self.isFetching = false
+                    self.render(error: error)
+                    self.reschedule()
+                }
+            })
+        }
+    }
+
+    private func refreshRates(then next: @escaping () -> Void) {
+        fx.rates { [weak self] rates in
+            DispatchQueue.main.async {
+                // A failed rates fetch is not a failed refresh: sales figures matter more than the
+                // currency they're shown in, and the menu says when conversion is unavailable.
+                if let rates { self?.rates = rates }
+                next()
+            }
+        }
+    }
+
+    /// One request, reported back — so Settings can say whether the credentials work instead of
+    /// leaving the user to read the menu bar and guess.
+    private func testConnection(_ completion: @escaping (Result<Void, Error>) -> Void) {
+        ASCClient().fetchTSV(ReportDate.yesterday()) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    // A 404 counts as success: it means Apple accepted the key and simply has no
+                    // report for that date, which is a schedule fact, not a credential problem.
+                    completion(.success(()))
+                case .failure(let error):
+                    completion(.failure(error))
                 }
             }
-        })
+        }
+    }
+
+    // MARK: - Scheduling
+
+    /// Sleeps until Apple's next publication window rather than polling all day. Outside the
+    /// window the answer cannot change, so asking is pure noise.
+    private func reschedule() {
+        pollTimer?.invalidate()
+        let newest = store.loadAll(window).map(\.date).max()
+        let next = Schedule.nextPoll(newestCached: newest)
+
+        let timer = Timer(fireAt: next, interval: 0, target: self,
+                          selector: #selector(scheduledPoll), userInfo: nil, repeats: false)
+        // `.common` mode: a timer in the default mode stops firing while a menu is open.
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
+    @objc private func scheduledPoll() {
+        refresh(userInitiated: false)
     }
 }
 

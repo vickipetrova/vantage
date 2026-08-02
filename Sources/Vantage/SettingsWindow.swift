@@ -12,6 +12,14 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     /// Called after credentials change, so the app can retry a fetch immediately.
     var onCredentialsChanged: (() -> Void)?
 
+    /// Called when a display preference changes — no refetch needed, everything is recomputed
+    /// from the cache.
+    var onPreferencesChanged: (() -> Void)?
+
+    /// Makes one real request and reports whether it worked. Injected rather than built here so
+    /// this window stays a form and knows nothing about App Store Connect.
+    var testConnection: ((@escaping (Result<Void, Error>) -> Void) -> Void)?
+
     private var window: NSWindow?
 
     private let issuerField = NSTextField()
@@ -19,6 +27,10 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     private let vendorField = NSTextField()
     private let saveStatus = NSTextField(labelWithString: "")
     private let chooseKeyButton = NSButton()
+    private let currencyPopUp = NSPopUpButton()
+    private let notifyCheckbox = NSButton()
+    private let launchCheckbox = NSButton()
+    private let testButton = NSButton()
 
     /// One status label per credential, showing what the Keychain actually holds right now.
     ///
@@ -42,7 +54,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     private func build() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 620),
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false)
         window.title = "Vantage Settings"
@@ -102,12 +114,46 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         save.keyEquivalent = "\r"
         let forget = NSButton(title: "Forget credentials", target: self, action: #selector(forget))
         forget.bezelStyle = .rounded
+        testButton.title = "Test connection"
+        testButton.bezelStyle = .rounded
+        testButton.target = self
+        testButton.action = #selector(runTest)
         buttons.addArrangedSubview(save)
+        buttons.addArrangedSubview(testButton)
         buttons.addArrangedSubview(forget)
-        buttons.addArrangedSubview(saveStatus)
+        stack.addArrangedSubview(buttons)
+
         saveStatus.font = .systemFont(ofSize: 11)
         saveStatus.textColor = .secondaryLabelColor
-        stack.addArrangedSubview(buttons)
+        saveStatus.lineBreakMode = .byWordWrapping
+        saveStatus.maximumNumberOfLines = 3
+        saveStatus.preferredMaxLayoutWidth = 400
+        stack.addArrangedSubview(saveStatus)
+
+        // MARK: Display
+
+        stack.addArrangedSubview(separator())
+        stack.addArrangedSubview(heading("Display"))
+
+        currencyPopUp.addItems(withTitles: Prefs.selectableCurrencies)
+        currencyPopUp.target = self
+        currencyPopUp.action = #selector(currencyChanged)
+        stack.addArrangedSubview(labelled("Currency", currencyPopUp, nil))
+        stack.addArrangedSubview(caption(
+            "Proceeds are converted at the European Central Bank's daily rates and marked ≈. "
+            + "Currencies the ECB doesn't publish are listed separately rather than dropped."))
+
+        notifyCheckbox.setButtonType(.switch)
+        notifyCheckbox.title = "Notify me when a new report lands"
+        notifyCheckbox.target = self
+        notifyCheckbox.action = #selector(notifyToggled)
+        stack.addArrangedSubview(notifyCheckbox)
+
+        launchCheckbox.setButtonType(.switch)
+        launchCheckbox.title = "Launch at login"
+        launchCheckbox.target = self
+        launchCheckbox.action = #selector(launchToggled)
+        stack.addArrangedSubview(launchCheckbox)
 
         let content = NSView()
         content.addSubview(stack)
@@ -143,22 +189,23 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     }
 
     private func labelled(_ title: String, _ control: NSView,
-                          _ key: KeychainStore.Key) -> NSView {
+                          _ key: KeychainStore.Key?) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.spacing = 8
         let label = NSTextField(labelWithString: title)
         label.alignment = .right
         label.widthAnchor.constraint(equalToConstant: 96).isActive = true
-
-        let indicator = NSTextField(labelWithString: "")
-        indicator.font = .systemFont(ofSize: 11)
-        indicator.lineBreakMode = .byTruncatingTail
-        indicators[key] = indicator
-
         row.addArrangedSubview(label)
         row.addArrangedSubview(control)
-        row.addArrangedSubview(indicator)
+
+        if let key {
+            let indicator = NSTextField(labelWithString: "")
+            indicator.font = .systemFont(ofSize: 11)
+            indicator.lineBreakMode = .byTruncatingTail
+            indicators[key] = indicator
+            row.addArrangedSubview(indicator)
+        }
         return row
     }
 
@@ -193,6 +240,16 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         saveStatus.stringValue = ""
         pendingPrivateKey = nil
         refreshIndicators()
+
+        currencyPopUp.selectItem(withTitle: Prefs.displayCurrency)
+        if currencyPopUp.indexOfSelectedItem < 0 {
+            // A display currency the ECB doesn't publish can't be converted into, so it isn't
+            // offered — fall back visibly rather than showing a blank menu.
+            currencyPopUp.selectItem(withTitle: "USD")
+            Prefs.displayCurrency = "USD"
+        }
+        notifyCheckbox.state = Prefs.morningNotification ? .on : .off
+        launchCheckbox.state = LaunchAtLogin.isEnabled ? .on : .off
     }
 
     @objc private func choosePrivateKey() {
@@ -268,6 +325,56 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         saveStatus.textColor = isError ? .systemRed : .secondaryLabelColor
     }
 
+    // MARK: - Test connection
+
+    /// One real request, so setup ends with an answer instead of a guess. A 404 counts as working:
+    /// it means Apple accepted the key and simply has no report for that date yet.
+    @objc private func runTest() {
+        guard KeychainStore.hasCredentials else {
+            report("Enter and save all four values first.", isError: true)
+            return
+        }
+        testButton.isEnabled = false
+        report("Asking App Store Connect…")
+        testConnection? { [weak self] result in
+            guard let self else { return }
+            self.testButton.isEnabled = true
+            switch result {
+            case .success:
+                self.report("Connected. App Store Connect accepted the key.")
+            case .failure(let error):
+                self.report((error as? SalesError)?.errorDescription
+                            ?? "Couldn't reach App Store Connect.", isError: true)
+            }
+        }
+    }
+
+    // MARK: - Display preferences
+
+    @objc private func currencyChanged() {
+        guard let selected = currencyPopUp.titleOfSelectedItem else { return }
+        Prefs.displayCurrency = selected
+        onPreferencesChanged?()
+    }
+
+    @objc private func notifyToggled() {
+        Prefs.morningNotification = notifyCheckbox.state == .on
+        onPreferencesChanged?()
+    }
+
+    @objc private func launchToggled() {
+        let wanted = launchCheckbox.state == .on
+        LaunchAtLogin.isEnabled = wanted
+        // Read the real status back rather than trusting the click. Registration fails when the app
+        // runs from a temporary or quarantined location — straight out of `build/`, typically — and
+        // a checkbox that snaps back with no explanation looks like a bug.
+        launchCheckbox.state = LaunchAtLogin.isEnabled ? .on : .off
+        if wanted, launchCheckbox.state == .off {
+            report("macOS refused to register a login item. Move Vantage to /Applications and "
+                   + "try again.", isError: true)
+        }
+    }
+
     private func label(_ key: KeychainStore.Key) -> String {
         switch key {
         case .issuerID: return "Issuer ID"
@@ -275,6 +382,13 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         case .privateKey: return ".p8 key"
         case .vendorNumber: return "Vendor Number"
         }
+    }
+
+    private func separator() -> NSView {
+        let box = NSBox()
+        box.boxType = .separator
+        box.widthAnchor.constraint(equalToConstant: 400).isActive = true
+        return box
     }
 
     @objc private func openAppleHelp() {

@@ -256,4 +256,41 @@ final class ReportParserTests: XCTestCase {
             XCTAssertEqual(day.downloads, expected, name)
         }
     }
+
+    // MARK: - In-app purchases belong to their app
+
+    /// An In-App Purchase row carries its *own* Apple Identifier and names its app only through
+    /// Parent Identifier, which holds the app's SKU. Grouping on Apple Identifier alone lists every
+    /// purchase product as though it were an app — which is exactly what the real report did.
+    func testInAppPurchasesRollUpToTheirParentApp() throws {
+        let day = try parse("typical-day.tsv")
+        XCTAssertEqual(day.apps.count, 2, "purchase products must not appear as apps")
+        XCTAssertEqual(Set(day.apps.map(\.appleID)), ["1111111111", "2222222222"])
+    }
+
+    func testParentAppKeepsItsOwnNameNotThePurchaseProducts() throws {
+        let day = try parse("typical-day.tsv")
+        XCTAssertEqual(day.apps.first { $0.appleID == "1111111111" }?.title, "App One")
+        XCTAssertEqual(day.apps.first { $0.appleID == "2222222222" }?.title, "App Two")
+    }
+
+    func testFreeAppKeepsItsPurchaseRevenue() throws {
+        let day = try parse("free-apps-blank-currency.tsv")
+        XCTAssertEqual(day.apps.count, 1)
+        let app = try XCTUnwrap(day.apps.first)
+        XCTAssertEqual(app.title, "Free App")
+        XCTAssertEqual(app.downloads, 3)
+        XCTAssertEqual(app.proceeds["CZK"], decimal("24.00"))
+    }
+
+    /// When the parent app sold nothing that day it has no rows, so its SKU can't be resolved to an
+    /// Apple ID. Its purchases should still group together rather than scattering into one row per
+    /// product.
+    func testOrphanedPurchasesGroupUnderTheirParentSKU() throws {
+        let day = try parse("orphan-iap.tsv")
+        XCTAssertEqual(day.apps.count, 1)
+        XCTAssertEqual(day.apps.first?.appleID, "GONEAPP")
+        XCTAssertEqual(day.apps.first?.proceeds["USD"], decimal("17.15"))
+        XCTAssertEqual(day.downloads, 0)
+    }
 }
