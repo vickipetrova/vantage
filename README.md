@@ -51,6 +51,14 @@ You'll need an **App Store Connect API key with the Sales and Reports role** —
 Vantage neither needs nor wants one — and your **Vendor Number** (App Store Connect › Payments and
 Financial Reports, top left).
 
+> [!IMPORTANT]
+> **Your Paid Applications agreement has to be Active.** Apple gates sales reports on it, and no API
+> key configuration works around that — a missing agreement comes back as an HTTP 403 that looks
+> like a permissions problem. Check App Store Connect › **Business** › Agreements: only **Active**
+> (or *Active (Pending User)*) is in effect. **Signing it is not enough on its own** — *Pending User
+> Info* means Apple is still waiting on your tax or banking details, and *Processing* means it's
+> under review. Vantage can't show anything until that row says Active.
+
 All four values are required: **Issuer ID**, **Key ID**, the **`.p8` file**, and the **Vendor
 Number**. Enter them in Settings and they go straight into the macOS Keychain.
 [SECURITY.md](SECURITY.md) documents exactly what that key can access and where it lives.
