@@ -1,0 +1,61 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The numbers this app shows have to be right, so the test suite gates every PR. It covers
+      # VantageCore only — parsing, money, dates, caching — which is the half that can be wrong
+      # without looking wrong.
+      - name: Test
+        run: swift test
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Verify the app bundle
+        run: |
+          set -euo pipefail
+          BIN="build/Vantage.app/Contents/MacOS/Vantage"
+          test -x "$BIN"
+          test -f "build/Vantage.app/Contents/Info.plist"
+          # Must be a universal binary — a single-arch slice means the --arch flags silently
+          # stopped working and Intel users get nothing.
+          lipo -info "$BIN" | tee /dev/stderr | grep -q "arm64"
+          lipo -info "$BIN" | grep -q "x86_64"
+
+      - name: Check nothing logs a credential
+        run: |
+          set -euo pipefail
+          # Cheap guard against the one mistake that actually matters here: flag any print/NSLog
+          # whose argument mentions a credential. Comment lines are excluded — the files that
+          # handle the key describe in prose that they never log it, and that prose is not a
+          # violation.
+          hits="$(grep -rniE '(print|NSLog|debugPrint|os_log|FileHandle\.standardError)[^\n]*(privatekey|private_key|p8|issuerid|issuer_id|keyid|key_id|vendornumber|vendor_number|jwt|bearer|secret|credential)' Sources/ \
+                  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*)' || true)"
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::Source appears to log a credential. See the guardrails in CLAUDE.md."
+            exit 1
+          fi
+          echo "OK — no credential logging found."
+
+      - name: Check no real reports or keys were committed
+        run: |
+          set -euo pipefail
+          # A committed .p8 is the worst possible accident in this repo, and a real sales report is
+          # the second worst. Fixtures are synthetic by rule; this checks the rule held.
+          bad="$(git ls-files | grep -E '\.(p8|gz)$|^AuthKey_' || true)"
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "::error::A private key or compressed report is tracked in git."
+            exit 1
+          fi
+          echo "OK — no keys or raw reports tracked."

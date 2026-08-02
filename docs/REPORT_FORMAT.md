@@ -109,8 +109,11 @@ Developer Proceeds." Their sample refund row is `1F`, Units `-50`, Developer Pro
 
 So `Units × Developer Proceeds` is correct arithmetic on its own — a refund subtracts, because the
 units are negative and the per-unit proceeds are not. **Never take the absolute value of either.**
-It also means a heavy-refund day can show negative downloads, which is what App Store Connect shows
-too.
+
+Downloads are counted **net**, negatives included, and the count is not floored at zero. A
+refund-heavy day can therefore display a negative download count. That is deliberate: it's the
+number App Store Connect's own Units column shows, so the two reconcile. A prettier figure that
+disagreed with the source of truth would be the worse outcome.
 
 ## Product type identifiers
 
@@ -188,15 +191,32 @@ one app unit sold"**. So a 404 has two entirely different meanings:
 1. The report isn't published yet (before ~08:00 PT the next day).
 2. There genuinely were zero units on that day, and no report will ever exist.
 
-They are indistinguishable by status code. Vantage resolves them by the clock — see the rule agreed
-in Phase 0 and implemented in `ReportStore`/the scheduler — and must never render a "not published
-yet" as `$0 · 0↓`, or a real zero day as a permanent loading state.
+They are indistinguishable by status code. Vantage resolves them by the clock:
+
+- **Before 10:00 PT** on the day after the report date, a 404 is "not published yet". The dropdown
+  says so, and the scheduler keeps retrying hourly.
+- **From 10:00 PT onward**, a 404 is taken as a genuine zero-units day: it's cached as zero proceeds
+  and zero downloads, and polling for that date stops. Apple publishes by 08:00 PT, so this allows
+  two hours of slack.
+
+That second rule is a guess, and it is allowed to be wrong. A day cached this way is stored as
+**assumed zero, not observed zero**, and that distinction is load-bearing: **Refresh Now re-fetches
+assumed-zero days.** A report that lands unusually late is one menu click away from correcting
+itself. Days derived from an actual 200 are immutable and are never re-fetched, ever.
+
+Vantage must never render a "not published yet" as `$0 · 0↓`, and never leave a real zero day
+looking like a permanent loading state.
 
 ## Currency
 
 `Currency of Proceeds` is the currency you're *paid* in for that storefront's region, and one day's
 report routinely spans several. Totals are therefore per-currency first, converted second, and the
 converted figure is always marked `≈`.
+
+Rates come from the ECB's own daily feed
+(`https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml`) rather than a JSON re-server like
+frankfurter.app. Same data, one fewer party in the request path, and it holds the app's total
+network surface to two hosts.
 
 The ECB publishes daily reference rates against EUR for roughly 29 currencies, on TARGET working
 days only — so the feed is stale over weekends and holidays by design (on 2026-08-02 the feed was
