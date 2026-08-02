@@ -182,7 +182,8 @@ public enum ReportParser {
         let parents: [String: (appleID: String, title: String)]
         var downloads: Decimal = 0
         var proceeds: [String: Decimal] = [:]
-        var apps: [String: (title: String, downloads: Decimal, proceeds: [String: Decimal])] = [:]
+        var apps: [String: (title: String, downloads: Decimal, proceeds: [String: Decimal],
+                            units: [String: Decimal])] = [:]
         var unitsByType: [String: Decimal] = [:]
         var skipped = 0
 
@@ -221,7 +222,8 @@ public enum ReportParser {
             }
 
             guard let owner = owner(of: row) else { return }
-            var app = apps[owner.key] ?? (title: owner.title, downloads: 0, proceeds: [:])
+            var app = apps[owner.key] ?? (title: owner.title, downloads: 0, proceeds: [:],
+                                          units: [:])
             // Prefer the title from a download row: In-App Purchase rows put the product ID in the
             // Title column, which is not the app's name.
             if row.isDownload, !row.title.isEmpty { app.title = row.title }
@@ -229,13 +231,15 @@ public enum ReportParser {
             if amount != 0, !row.currency.isEmpty {
                 app.proceeds[row.currency, default: 0] += amount
             }
+            if !row.productType.isEmpty { app.units[row.productType, default: 0] += row.units }
             apps[owner.key] = app
         }
 
         func day(date: ReportDate, fetchedAt: Date) -> DaySales {
             let summaries = apps
                 .map { AppSales(appleID: $0.key, title: $0.value.title,
-                                downloads: $0.value.downloads, proceeds: $0.value.proceeds) }
+                                downloads: $0.value.downloads, proceeds: $0.value.proceeds,
+                                unitsByProductType: $0.value.units) }
                 // Sorted by Apple ID rather than by money, because sorting by proceeds needs a
                 // display currency and a rate table. The menu sorts; the parser just groups.
                 .sorted { $0.appleID < $1.appleID }
