@@ -130,9 +130,9 @@ final class MenuController: NSObject, NSMenuDelegate {
             for line in Fmt.wrap((error as? SalesError)?.errorDescription ?? "Something went wrong.") {
                 menu.addItem(row(line))
             }
-            menu.addItem(row("Checked \(Fmt.clock(Date()))"))
+            menu.addItem(footnote("Checked \(Fmt.clock(Date()))"))
         } else if days.isEmpty {
-            menu.addItem(row("Loading…"))
+            menu.addItem(footnote("Loading…"))
         } else {
             buildYesterday(menu)
             buildApps(menu)
@@ -160,13 +160,13 @@ final class MenuController: NSObject, NSMenuDelegate {
         let previous = Array(days.dropFirst().prefix(7))
         if !previous.isEmpty {
             let average = Metric.units(in: previous, metrics: Prefs.metrics) / Decimal(previous.count)
-            menu.addItem(row("vs 7-day average: \(Fmt.change(from: average, to: units))"))
+            menu.addItem(footnote("vs 7-day average: \(Fmt.change(from: average, to: units))"))
         }
 
         if latest.origin == .assumedZero {
             menu.addItem(row("No report published — recorded as zero"))
         }
-        for note in total.notes { menu.addItem(row(note)) }
+        for note in total.notes { menu.addItem(footnote(note)) }
     }
 
     private func buildApps(_ menu: NSMenu) {
@@ -180,7 +180,7 @@ final class MenuController: NSObject, NSMenuDelegate {
                              + " · \(Fmt.downloadsWithArrow(units))"))
         }
         if ranked.count > Self.appRowLimit {
-            menu.addItem(row("+\(ranked.count - Self.appRowLimit) more"))
+            menu.addItem(footnote("+\(ranked.count - Self.appRowLimit) more"))
         }
     }
 
@@ -197,15 +197,15 @@ final class MenuController: NSObject, NSMenuDelegate {
             let units = Metric.units(in: window, metrics: Prefs.metrics)
             menu.addItem(header(label))
             menu.addItem(row("\(total.headline) · \(Fmt.downloadsWithArrow(units))"))
-            for note in total.notes { menu.addItem(row(note)) }
+            for note in total.notes { menu.addItem(footnote(note)) }
         }
     }
 
     private func buildFreshness(_ menu: NSMenu) {
         guard let latest = days.first else { return }
         menu.addItem(.separator())
-        menu.addItem(row("Report for \(Fmt.reportDate(latest.date))"
-                         + " · fetched \(Fmt.clock(latest.fetchedAt))"))
+        menu.addItem(footnote("Report for \(Fmt.reportDate(latest.date))"
+                              + " · fetched \(Fmt.clock(latest.fetchedAt))"))
 
         // Apple publishes a day's report the next morning. If the newest cached day isn't the
         // newest that could exist, say which day is on screen rather than letting "yesterday" imply
@@ -218,12 +218,12 @@ final class MenuController: NSObject, NSMenuDelegate {
             }
         }
         if let rates {
-            menu.addItem(row("≈ converted at ECB rates for \(rates.published)"))
+            menu.addItem(footnote("≈ converted at ECB rates for \(rates.published)"))
         } else {
-            menu.addItem(row("Exchange rates unavailable — showing one currency"))
+            menu.addItem(footnote("Exchange rates unavailable — showing one currency"))
         }
         let skipped = days.reduce(0) { $0 + $1.skippedRows }
-        if skipped > 0 { menu.addItem(row("⚠︎ \(skipped) unreadable rows skipped")) }
+        if skipped > 0 { menu.addItem(footnote("⚠︎ \(skipped) unreadable rows skipped")) }
         if let error {
             for line in Fmt.wrap((error as? SalesError)?.errorDescription ?? "Last refresh failed.") {
                 menu.addItem(row(line))
@@ -269,17 +269,57 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     private func header(_ text: String) -> NSMenuItem {
         let item = NSMenuItem()
+        // Derived from the menu font rather than pinned at 10pt: the rows below are now
+        // `menuFont(ofSize: 0)`, so a fixed size would drift out of proportion the moment someone
+        // raises their menu bar text size. Two points down from the row font, semibold.
+        let base = NSFont.menuFont(ofSize: 0).pointSize
         item.attributedTitle = NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: base - 2, weight: .semibold),
             .foregroundColor: NSColor.secondaryLabelColor,
         ])
         item.isEnabled = false
         return item
     }
 
+    /// A primary data row: the numbers people came here to read.
+    ///
+    /// Informational rows are disabled so they never take a selection highlight — they aren't
+    /// actions. But AppKit dims a *plain* title on a disabled item, so every figure in this menu
+    /// rendered as though it were an unavailable command. An attributed title keeps the
+    /// foreground colour it was given regardless of enabled state, which is why `header` never had
+    /// the problem and these rows did.
     private func row(_ text: String) -> NSMenuItem {
+        item(text, color: .labelColor)
+    }
+
+    /// A de-emphasized row: context about the numbers rather than the numbers themselves.
+    ///
+    /// Secondary rather than dimmed-by-accident. The distinction is the point — everything used to
+    /// look like this whether it meant to or not.
+    private func footnote(_ text: String) -> NSMenuItem {
+        item(text, color: .secondaryLabelColor)
+    }
+
+    private func item(_ text: String, color: NSColor) -> NSMenuItem {
         let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.isEnabled = false
+        // `menuFont(ofSize: 0)` is the system's own menu font at its own size. Hardcoding a size
+        // would break at the larger menu-bar text settings people actually use.
+        item.attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: NSFont.menuFont(ofSize: 0),
+            .foregroundColor: color,
+        ])
+        // Enabled, despite these rows not being commands.
+        //
+        // A disabled item is drawn dimmed by macOS *regardless* of the foreground colour its
+        // attributed title specifies — verified directly: disabled items with `labelColor`, with a
+        // colour resolved to sRGB, and with `textColor` all render identically grey, while enabled
+        // items render at full strength. So enabled state, not colour, is the only lever, and the
+        // whole panel reads as unavailable without this.
+        //
+        // `action` stays nil, so there is nothing to fire. The cost is that macOS treats them as
+        // selectable: they can highlight under the pointer, and a click dismisses the menu without
+        // doing anything.
+        item.isEnabled = true
         return item
     }
 
