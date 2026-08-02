@@ -175,6 +175,26 @@ final class BackfillTests: XCTestCase {
         XCTAssertEqual(result.error as? SalesError, .forbidden(detail: "first"))
     }
 
+    /// A wrong key fails identically for every date, so the run should stop at the first one
+    /// rather than spending a minute proving it twenty-nine more times.
+    func testACredentialFailureStopsTheWholeBackfill() {
+        let dates = today.lastDays(10)
+        for date in dates { provider.answers[date.apiString] = .failure(SalesError.unauthorized(detail: nil)) }
+
+        let result = run(dates, now: afterCutoff)
+        XCTAssertEqual(provider.requested.count, 1)
+        XCTAssertEqual(result.error as? SalesError, .unauthorized(detail: nil))
+    }
+
+    func testARateLimitDoesntStopTheBackfill() {
+        let dates = today.lastDays(4)
+        for date in dates { provider.answers[date.apiString] = .success(day(date)) }
+        provider.answers[dates[3].apiString] = .failure(SalesError.rateLimited)
+
+        run(dates, now: afterCutoff)
+        XCTAssertEqual(provider.requested.count, 4)
+    }
+
     func testAnEmptyDateListCompletesImmediately() {
         let result = run([], now: afterCutoff)
         XCTAssertTrue(result.days.isEmpty)
