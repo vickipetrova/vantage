@@ -1,75 +1,80 @@
 import AppKit
 import VantageCore
 
-/// Wiring. In v0.1 this owns the provider, the disk cache, and the scheduler that watches for Apple
-/// to publish yesterday's report.
+/// Wiring: a provider, a cache, and the backfill that fills the gap between them.
 ///
-/// Phase 2 state: one fetch of one day, straight to disk, so the credentials and the whole network
-/// path can be verified against real numbers before any parsing exists to be wrong about them.
+/// Phase 3 state: the dropdown lists each cached day with its totals, so the numbers can be checked
+/// against App Store Connect line by line. Phase 4 replaces that with the real design — menu bar
+/// title, per-app rows, 7- and 30-day windows, currency conversion, and the scheduler.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuController = MenuController()
     private let settingsWindow = SettingsWindow()
-    private let client = ASCClient()
+    private let store = ReportStore()
+    private let backfill: Backfill
+
+    /// How far back the first run reaches. Thirty days covers the 7- and 30-day windows the menu
+    /// shows, and Apple keeps daily reports for a year, so a wider net is possible but pointless.
+    private static let backfillDays = 30
+
+    override init() {
+        backfill = Backfill(provider: ASCClient(), store: ReportStore())
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)  // Menu bar only, no dock icon.
         MainMenu.install()  // Without this, ⌘V doesn't work in the Settings fields.
 
-        menuController.onRefresh = { [weak self] in self?.refresh() }
+        menuController.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
         menuController.onSettings = { [weak self] in self?.settingsWindow.show() }
-        settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh() }
+        settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
 
         guard KeychainStore.hasCredentials else {
-            // First launch: there is nothing to show and nothing to fetch, so open the one window
-            // that fixes that rather than sitting there displaying a dash.
+            // First launch: nothing to show and nothing to fetch, so open the one window that
+            // fixes that rather than sitting there displaying a dash.
             menuController.showNoCredentials()
             settingsWindow.show()
             return
         }
-        refresh()
+        showCached()
+        refresh(userInitiated: false)
     }
 
-    private func refresh() {
+    private var window: [ReportDate] { ReportDate.yesterday().lastDays(Self.backfillDays) }
+
+    /// Renders whatever is already on disk. Instant, offline, and the reason a relaunch doesn't
+    /// stare blankly while thirty requests go out.
+    private func showCached() {
+        let days = store.loadAll(window)
+        if days.isEmpty {
+            menuController.showLoading()
+        } else {
+            menuController.show(days: days)
+        }
+    }
+
+    private func refresh(userInitiated: Bool) {
         guard KeychainStore.hasCredentials else {
             menuController.showNoCredentials()
             return
         }
-        let date = ReportDate.yesterday()
-        menuController.showLoading()
-
-        client.fetchTSV(date) { [weak self] result in
-            DispatchQueue.main.async {
+        backfill.run(dates: window, userInitiated: userInitiated, onDay: { _ in
+            // Each day lands independently, so the menu fills in as they arrive rather than
+            // staying empty until the last request returns.
+            DispatchQueue.main.async { [weak self] in self?.showCached() }
+        }, completion: { error in
+            DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                switch result {
-                case .success(nil):
-                    self.menuController.showNoReportYet(date: date)
-                case .success(.some(let tsv)):
-                    self.save(tsv, for: date)
-                case .failure(let error):
+                let days = self.store.loadAll(self.window)
+                if let error, days.isEmpty {
                     self.menuController.show(error: error)
+                } else {
+                    // Some days are on screen, so a failure on one of them is a footnote rather
+                    // than a reason to blank everything out.
+                    self.menuController.show(days: days, warning: error)
                 }
             }
-        }
-    }
-
-    /// Phase 2 only. Writes the decompressed report where it can be opened and compared against
-    /// App Store Connect by hand. Phase 3 replaces this with the parsed, cached day summary — this
-    /// app has no reason to keep raw reports around long-term.
-    private func save(_ tsv: String, for date: ReportDate) {
-        let directory = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/Vantage/raw", isDirectory: true)
-        let file = directory.appendingPathComponent("\(date.apiString).tsv")
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try tsv.write(to: file, atomically: true, encoding: .utf8)
-            // The path is safe to display: the filename is a date, never the vendor number.
-            menuController.showRawReport(
-                date: date,
-                lineCount: tsv.split(separator: "\n").count,
-                path: file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-        } catch {
-            menuController.show(error: SalesError.badReport)
-        }
+        })
     }
 }
 
