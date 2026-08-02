@@ -1,0 +1,20 @@
+build/
+.build/
+*.dmg
+.DS_Store
+
+# Credentials. Nothing in this repo ever needs an App Store Connect private key on disk — the key
+# lives in the Keychain — but a stray AuthKey_XXXXXXXX.p8 in the working directory is the single
+# worst thing that could be committed here, so it is excluded defensively and by shape.
+*.p8
+AuthKey_*
+
+# Real reports and the on-disk cache, in case anyone points the app's Application Support path here
+# or unzips a downloaded report to poke at it. Fixtures under Tests/Fixtures/ are synthetic and are
+# committed deliberately; these are not.
+*.gz
+S_D_*.txt
+Application Support/
+
+# Local working materials, not part of the published repo
+VANTAGE_PLAN.md
