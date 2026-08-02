@@ -113,7 +113,11 @@ final class MenuController: NSObject, NSMenuDelegate {
         let notes = unconverted.sorted { $0.key < $1.key }.map {
             "+ \(Fmt.money($0.value, currency: $0.key)) — no ECB rate"
         }
-        return MoneyText(headline: "≈ " + format(converted, Prefs.displayCurrency),
+        // No `≈` in the menu bar. It's a permanent fixture of the title rather than a warning about
+        // any particular number, and at that size it reads as clutter. The dropdown keeps it, along
+        // with the line naming the rate date — that's where someone checking a figure is looking.
+        let marker = compact ? "" : "≈ "
+        return MoneyText(headline: marker + format(converted, Prefs.displayCurrency),
                          notes: notes, sortKey: converted)
     }
 

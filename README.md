@@ -3,7 +3,7 @@
 Your App Store portfolio in the macOS menu bar:
 
 ```
-≈ $142 · 89↓
+$142 · 89↓
 ```
 
 Yesterday's proceeds and yesterday's first-time downloads, across every app under your vendor

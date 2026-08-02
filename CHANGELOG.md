@@ -10,9 +10,9 @@ First release, not yet tagged.
 
 ### Added
 
-- **Menu bar title** — `≈ $142 · 89↓`: yesterday's proceeds converted to your display currency, and
+- **Menu bar title** — `$142 · 89↓`: yesterday's proceeds converted to your display currency, and
   yesterday's first-time downloads. Monospaced digits so the title doesn't shuffle as numbers
-  change.
+  change. The `≈` lives in the dropdown, not the title.
 - **Dropdown** with yesterday's totals against the trailing 7-day average, a per-app breakdown
   sorted by proceeds, 7- and 30-day windows, and a freshness line naming the report's own date.
 - **Authentication with no dependencies.** ES256 JWTs are minted and signed locally with CryptoKit
