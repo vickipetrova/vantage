@@ -150,12 +150,14 @@ public enum ReportParser {
         var downloads: Decimal = 0
         var proceeds: [String: Decimal] = [:]
         var apps: [String: (title: String, downloads: Decimal, proceeds: [String: Decimal])] = [:]
+        var unitsByType: [String: Decimal] = [:]
         var skipped = 0
 
         mutating func add(_ row: Row) {
             let amount = row.proceeds
             let key = row.appleID.isEmpty ? row.title : row.appleID
 
+            if !row.productType.isEmpty { unitsByType[row.productType, default: 0] += row.units }
             if row.isDownload { downloads += row.units }
 
             // A blank Currency of Proceeds is normal, not damage: free-app rows carry units and no
@@ -191,7 +193,8 @@ public enum ReportParser {
 
             return DaySales(date: date, origin: .observed, downloads: downloads,
                             proceeds: proceeds, apps: summaries,
-                            fetchedAt: fetchedAt, skippedRows: skipped)
+                            fetchedAt: fetchedAt, skippedRows: skipped,
+                            unitsByProductType: unitsByType)
         }
     }
 }

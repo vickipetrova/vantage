@@ -225,4 +225,35 @@ final class ReportParserTests: XCTestCase {
         XCTAssertEqual(day.downloads, decimal("2.50"))
         XCTAssertEqual(day.proceeds["USD"], decimal("2.50"))
     }
+
+    // MARK: - Diagnostics
+
+    /// "Downloads" is a judgement call; the per-type tally is not. It's what makes a disagreement
+    /// with App Store Connect answerable without re-downloading the report and diffing by hand.
+    func testTallyRecordsEveryProductTypeIncludingOnesThatArentDownloads() throws {
+        let day = try parse("updates-and-redownloads.tsv")
+        XCTAssertEqual(day.unitsByProductType["7"], 500)
+        XCTAssertEqual(day.unitsByProductType["3"], 40)
+        XCTAssertEqual(day.unitsByProductType["1"], 3)
+        XCTAssertEqual(day.unitsByProductType.values.reduce(0, +), 833)
+    }
+
+    func testTallyKeepsUnknownCodesUnderTheirOwnName() throws {
+        let day = try parse("unknown-product-types.tsv")
+        XCTAssertEqual(day.unitsByProductType["1AY"], 1)
+        XCTAssertEqual(day.unitsByProductType["ZZ9"], 2)
+    }
+
+    /// Downloads must always equal the tally restricted to first-download codes — otherwise the
+    /// diagnostic and the number it explains have drifted apart.
+    func testDownloadsEqualTheFirstDownloadSliceOfTheTally() throws {
+        for name in ["typical-day.tsv", "mac-and-bundles.tsv", "refunds.tsv",
+                     "free-apps-blank-currency.tsv", "updates-and-redownloads.tsv"] {
+            let day = try parse(name)
+            let expected = day.unitsByProductType
+                .filter { ReportParser.firstDownloadTypes.contains($0.key) }
+                .values.reduce(Decimal(0), +)
+            XCTAssertEqual(day.downloads, expected, name)
+        }
+    }
 }

@@ -39,9 +39,18 @@ public struct DaySales: Equatable, Codable, Sendable {
     /// silently shaving numbers.
     public let skippedRows: Int
 
+    /// Net units per product type identifier, exactly as Apple labelled them.
+    ///
+    /// Kept because "downloads" is a judgement call and this isn't. When Vantage's figure disagrees
+    /// with App Store Connect's, the answer is always in here — which codes were counted, which
+    /// weren't — and without it the only way to find out is to re-download the report and diff by
+    /// hand.
+    public let unitsByProductType: [String: Decimal]
+
     public init(date: ReportDate, origin: Origin, downloads: Decimal,
                 proceeds: [String: Decimal], apps: [AppSales],
-                fetchedAt: Date, skippedRows: Int = 0) {
+                fetchedAt: Date, skippedRows: Int = 0,
+                unitsByProductType: [String: Decimal] = [:]) {
         self.date = date
         self.origin = origin
         self.downloads = downloads
@@ -49,6 +58,22 @@ public struct DaySales: Equatable, Codable, Sendable {
         self.apps = apps
         self.fetchedAt = fetchedAt
         self.skippedRows = skippedRows
+        self.unitsByProductType = unitsByProductType
+    }
+
+    /// Decoded leniently so a cache written by an older build stays valid instead of forcing a
+    /// thirty-request refetch every time a field is added.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        date = try container.decode(ReportDate.self, forKey: .date)
+        origin = try container.decode(Origin.self, forKey: .origin)
+        downloads = try container.decode(Decimal.self, forKey: .downloads)
+        proceeds = try container.decode([String: Decimal].self, forKey: .proceeds)
+        apps = try container.decode([AppSales].self, forKey: .apps)
+        fetchedAt = try container.decode(Date.self, forKey: .fetchedAt)
+        skippedRows = try container.decodeIfPresent(Int.self, forKey: .skippedRows) ?? 0
+        unitsByProductType = try container.decodeIfPresent(
+            [String: Decimal].self, forKey: .unitsByProductType) ?? [:]
     }
 
     /// A day Apple published no report for, past the point where it might still arrive.
