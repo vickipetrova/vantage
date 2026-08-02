@@ -8,6 +8,7 @@ Notes for Claude Code sessions working in this repo.
 swift test                        # VantageCore — run this before anything else
 ./build.sh                        # -> build/Vantage.app (universal, ad-hoc signed)
 ./build.sh --dmg                  # also -> build/Vantage.dmg
+./build.sh --dmg-only             # DMG around the existing bundle, no rebuild (release step)
 open build/Vantage.app
 pkill -f "MacOS/Vantage"          # stop it (menu bar app; there's no window to close)
 ```
@@ -16,125 +17,153 @@ There is no Xcode project. `Package.swift` defines the targets; `build.sh` runs
 `swift build -c release --arch arm64 --arch x86_64`, copies the universal binary into a hand-written
 `.app` bundle, writes `Info.plist`, and ad-hoc signs it.
 
+`swift test` needs full Xcode — the Command Line Tools don't ship XCTest. Building doesn't.
+
+`swift run` produces a bare binary with no `Info.plist`, so no `LSUIElement`, no login-item identity
+and no notification registration. Always test through `./build.sh && open build/Vantage.app`.
+
 ## Architecture
 
-Two targets, one seam:
+Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. That's what lets
+`swift test` cover every number the app displays without a window server. If a helper needs
+`NSColor`, it belongs in the app target.
 
 | File | Responsibility |
 |---|---|
 | `Sources/VantageCore/ReportDate.swift` | A day in Apple's Pacific reporting calendar, and the publication schedule |
-| `Sources/VantageCore/SalesProvider.swift` | `DaySales`/`AppSales` models, the `SalesProvider` protocol, `SalesError` |
-| `Sources/VantageCore/ASCClient.swift` | JWT minting, the one salesReports request, gunzip |
+| `Sources/VantageCore/SalesProvider.swift` | `DaySales`/`AppSales` models, the `SalesProvider` protocol, `SalesError`, error-body scrubbing |
+| `Sources/VantageCore/ASCClient.swift` | JWT minting, the one salesReports request |
+| `Sources/VantageCore/Gunzip.swift` | gzip container → raw DEFLATE, with CRC32 and ISIZE verified |
 | `Sources/VantageCore/ReportParser.swift` | TSV → `DaySales` |
 | `Sources/VantageCore/ReportStore.swift` | Disk cache of immutable daily summaries |
-| `Sources/VantageCore/FX.swift` | ECB rates fetch and conversion |
+| `Sources/VantageCore/Backfill.swift` | Fetches missing days, newest first |
+| `Sources/VantageCore/Schedule.swift` | When to poll, and when a report deserves a notification |
+| `Sources/VantageCore/Metric.swift` | Which product types count as what |
+| `Sources/VantageCore/FX.swift` | ECB rates fetch, parse and conversion |
 | `Sources/VantageCore/KeychainStore.swift` | Credential storage |
-| `Sources/VantageCore/Format.swift` | Currency, unit counts, dates |
-| `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → menu, and the poll scheduler |
-| `Sources/Vantage/MenuController.swift` | Status item: menu bar title and dropdown |
+| `Sources/VantageCore/Prefs.swift` | UserDefaults-backed preferences |
+| `Sources/VantageCore/Format.swift` | Currency, unit counts, dates, menu-width wrapping |
+| `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on both hosts |
+| `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → menu, rates, poll timer, wake |
+| `Sources/Vantage/MenuController.swift` | Status item: title, dropdown, Metrics submenu |
 | `Sources/Vantage/SettingsWindow.swift` | Credentials and preferences, programmatic AppKit |
+| `Sources/Vantage/MainMenu.swift` | The Edit menu — without it ⌘V doesn't work anywhere |
 | `Sources/Vantage/Notifier.swift` | The morning notification |
+| `Sources/Vantage/LaunchAtLogin.swift` | `SMAppService` proxy |
 
-`VantageCore` imports **Foundation only** — no AppKit. That's what makes `swift test` able to cover
-every number the app displays without a window server. Keep it that way: if a formatting helper
-needs `NSColor`, it belongs in the app target.
-
-`MenuController` renders `DaySales` and nothing else. No App Store Connect strings in it — that's
-what lets a second `SalesProvider` (RevenueCat, eventually) be one new file.
+`MenuController` renders `[DaySales]` and a rate table. No App Store Connect strings in it — that's
+what makes a second `SalesProvider` (RevenueCat, eventually) one new file.
 
 ## Hard rules
 
-1. **Never print, log, or commit any credential** — the `.p8` contents, Issuer ID, Key ID, Vendor
-   Number, or a minted JWT. Not in debug output, not in error messages, not in a URL that gets
-   logged, not in CI. `.github/workflows/build.yml` greps for this and also fails if a `.p8` or a
-   `.gz` is ever tracked.
+1. **Never print, log, or commit any credential** — `.p8` contents, Issuer ID, Key ID, Vendor
+   Number, or a minted JWT. `Credentials` is deliberately opaque to string interpolation. CI greps
+   for it and also fails if a `.p8` or `.gz` is ever tracked.
 2. **Zero third-party dependencies.** Foundation, AppKit, CryptoKit, Compression, Security,
-   UserNotifications, ServiceManagement. Nothing else, ever. Apple ships an OpenAPI SDK for this
-   API; one endpoint does not justify it.
+   UserNotifications, ServiceManagement. Apple ships an OpenAPI SDK for this API; one endpoint does
+   not justify it.
 3. **Money is `Decimal`.** Never `Double`, not even briefly, not even for a sort key.
 4. **All TSV parsing degrades gracefully.** A malformed row is skipped and counted in
-   `DaySales.skippedRows`. Never crash, never throw away the day. Product type identifiers you
-   don't recognize count toward proceeds and never toward downloads.
-5. **Two network destinations:** `api.appstoreconnect.apple.com` and `www.ecb.europa.eu`. No
-   telemetry, no analytics, no update checks.
-6. **`build.sh` signs ad-hoc only.** It must never handle a Developer ID, an app-specific password,
-   or notarization credentials. Releasing is a manual maintainer step — see `docs/RELEASING.md`.
+   `DaySales.skippedRows`. Unknown product types count toward proceeds, never toward downloads.
+5. **Two network destinations**, enforced by `NoRedirects` rather than merely documented.
+6. **`build.sh` signs ad-hoc only.** It must never handle a Developer ID or notarization
+   credentials. Releasing is a manual maintainer step — see `docs/RELEASING.md`.
 
 ## The report format
 
-`docs/REPORT_FORMAT.md` is the verified reference: columns, product type identifiers, the Pacific
-day boundary, the ambiguous 404, and refund sign conventions. **Read it before touching
-`ReportParser`.** It is written from Apple's current documentation with sources, and it records
-several places where Apple's own docs contradict each other.
+`docs/REPORT_FORMAT.md` is the verified reference, written from Apple's current documentation with
+sources, and it records several places where Apple's own docs contradict each other. **Read it
+before touching `ReportParser`.**
 
-The three facts that catch people out:
+The traps that cost real time here, all of which have tests:
 
-- **Report days are Pacific**, and the report has no time zone of its own. "Yesterday" means
-  yesterday in `America/Los_Angeles`, which for a European user is sometimes two local days back.
+- **Report days are Pacific.** "Yesterday" means yesterday in `America/Los_Angeles`, which for a
+  European user is sometimes two local days back. App Store Connect's dashboard defaults to UTC, so
+  it disagrees with the reports it's derived from.
 - **A 404 is ambiguous.** Apple only generates a report when at least one unit sold, so a missing
   report means either "not published yet" or "genuinely zero". Resolved by the clock: before 10:00
-  PT it's pending, after that it's cached as `.assumedZero` — and Refresh Now re-fetches
-  `.assumedZero` days, which is the escape hatch when a report lands late. `.observed` days are
-  immutable and never re-fetched.
-- **Refunds are negative Units with positive per-unit proceeds.** `Units × Developer Proceeds` is
-  therefore already correct. Never take an absolute value; never floor downloads at zero.
+  PT it's pending; after, it's cached as `.assumedZero`. **Refresh Now re-fetches `.assumedZero`
+  days** — that's the escape hatch for a late report. `.observed` days are immutable and never
+  re-fetched, by anything.
+- **Refunds are negative Units with positive per-unit proceeds**, so `Units × Developer Proceeds` is
+  already correct. Never take an absolute value; never floor downloads at zero.
+- **In-app purchases carry their own Apple Identifier** and name their app only through
+  `Parent Identifier`, which holds the app's *SKU*. Grouping on Apple Identifier alone lists every
+  purchase product as though it were an app while the app that earned the money reads as zero.
+- **Free-app rows have a blank Currency of Proceeds.** Bucketing those under `""` puts a nameless
+  currency in the menu.
+- **The column is `Developer Proceeds`.** Apple's field reference calls it "Developer Proceeds (per
+  unit)"; no real report does. Columns are matched by normalized name, never by position.
 
 ## Why gunzip in-process
 
 Apple returns a gzip file, and the Compression framework's `zlib` is documented as "the raw
-`DEFLATE` format" — it will not eat a gzip container. So `ASCClient` strips the 10-byte gzip header
-(plus whatever `FEXTRA`/`FNAME`/`FCOMMENT`/`FHCRC` the flag byte announces), inflates raw, and
-checks the CRC32 and ISIZE trailer.
+`DEFLATE` format" — it will not eat a gzip container. So `Gunzip` strips the 10-byte header (plus
+whatever `FEXTRA`/`FNAME`/`FCOMMENT`/`FHCRC` the flag byte announces), inflates raw, and checks the
+CRC32 and ISIZE trailer.
 
-The alternative is piping through `/usr/bin/gunzip`. That's less code and it puts a day of sales
+The alternative is piping through `/usr/bin/gunzip`, which is less code and puts a day of sales
 figures through a subprocess's stdout, where it can land in a crash log or be read by anything
-watching the process tree. Not worth it for the page of code saved.
+watching the process tree. Not worth the lines saved.
 
 ## Known gap: onboarding
 
-`SettingsWindow` is a four-field form, and it is the weakest part of v0.1. It assumes the user
-already knows what an Issuer ID is and where to find it, and gives no feedback on whether the
-credentials work until a fetch either succeeds or doesn't.
+`SettingsWindow` is a four-field form and it's the weakest part of v0.1 — it assumes the user knows
+what an Issuer ID is. Planned replacement, tracked as a `good first issue`: a step-by-step first-run
+walkthrough with one value per step, a screenshot of where each lives, an explicit "Sales and
+Reports role, not Admin" step, and credential errors that name which value looks wrong.
+**Test connection** is the first piece of that.
 
-Planned replacement, tracked as a `good first issue` and described in the README: a step-by-step
-first-run walkthrough with one value per step, a screenshot of where each lives in App Store
-Connect, an explicit "Sales and Reports role, not Admin" step, and a **Test connection** button that
-makes one real request and reports the result immediately. Credential errors should name the value
-that looks wrong instead of the generic "App Store Connect rejected the key".
-
-Two things that are easy to break here and were fixed the hard way:
+Two things here that were fixed the hard way and are easy to undo:
 
 - **⌘V needs `MainMenu.install()`.** An accessory app has no menu bar of its own, and AppKit
   dispatches keyboard shortcuts by matching main-menu items — with no Edit menu, `paste:` reaches
   nothing and the fields silently refuse to paste. Nobody types an Issuer ID by hand.
-- **The `.p8` is never displayed**, only reported as present or absent, so it can't end up in a
-  screenshot attached to a bug report.
+- **Every path out of the file picker reports something.** Cancelled, unreadable, wrong file. A
+  picker that appears to do nothing is indistinguishable from a broken button.
 
 ## Known constraint: notifications
 
 macOS refuses notification registration for ad-hoc signed bundles — `requestAuthorization` returns
-`UNErrorDomain` code 1, "Notifications are not allowed for this application", and the app never
-appears in System Settings › Notifications. **The morning notification therefore cannot be verified
-from a `./build.sh` build**; the menu shows "Notifications blocked" instead. Signed, notarized
-releases are not affected.
+`UNErrorDomain` code 1, and the app never appears in System Settings › Notifications. `./build.sh`
+produces exactly such a bundle, so **the morning notification cannot be verified from a build from
+source.** Signed, notarized releases are unaffected.
 
-The scheduling logic around it is still testable — it's in `VantageCore` and driven by an injected
-`now`, so tests can put the clock at 05:00 PT and assert what fires.
+The scheduling around it is still testable: it lives in `Schedule` and takes an injected `now`.
 
-## Testing without real credentials
+## Testing error states without real credentials
 
-Everything except the network round trip runs offline:
+Everything except the network round trip runs offline, and the parts that don't can be exercised
+without touching the Keychain. **`ASCClient.init` takes a credentials closure** — pass one that
+returns a deliberately wrong `Credentials` and no real key is ever read.
 
-- **`ReportParser`** is pure. Feed it the fixture TSVs in `Tests/Fixtures/` — multi-app
-  multi-currency, updates and re-downloads to exclude, unknown product types, malformed rows, a
-  refund day, and a zero-sales day.
-- **The 404 rule** is `ReportDate.mayStillArrive(now:)`. Pass an instant, assert pending vs zero.
-- **`FX`** takes a rate table; conversion, rounding and the missing-currency path need no network.
+For a live check, copy the repo to a scratch directory, patch the copy, and build a throwaway
+bundle from it. Point `ReportStore` and `FX` at a temporary directory in the same patch so the real
+cache is untouched — and note that `NSTemporaryDirectory()` is the per-user folder under
+`/var/folders/…`, not `/tmp`.
 
-**Never commit a real report or real credentials as a fixture.** Fixtures are hand-written,
-synthetic, and small enough to read. CI fails if a `.p8` or `.gz` is tracked.
+- **Wrong key** — expect `!`, and a message naming Issuer ID, Key ID and `.p8`. The backfill stops
+  at the first date rather than failing thirty times.
+- **Rates unavailable** — patch `FX.endpoint` to a host that doesn't resolve *and* delete the cached
+  `fx-rates.json`, or it will quietly serve yesterday's rates and prove nothing. Expect the largest
+  single currency in its own currency, `+ n other currencies`, and no `≈`.
+- **Corrupt cache** — overwrite a `~/Library/Application Support/Vantage/<date>.json` with junk.
+  It should be refetched into a valid day, not reported as an error.
+- **No credentials** — Settings opens by itself at launch.
+
+Reading the menu without screenshots:
+
+```bash
+osascript -e 'tell application "System Events" to tell process "Vantage" \
+  to get name of every menu item of menu 1 of menu bar item 1 of menu bar (count of menu bars)'
+```
+
+`(count of menu bars)` matters: once the app is frontmost it has two, and the status item is the
+last one, not the first.
 
 ## Releasing
 
-Bump `VERSION` in `build.sh`, add the entry to `CHANGELOG.md`, tag `vX.Y.Z`. See
-`docs/RELEASING.md` for the manual signing and notarization steps.
+Bump `VERSION` in `build.sh`, add the entry to `CHANGELOG.md`, tag `vX.Y.Z`. CI fails the release if
+the tag and `VERSION` disagree. See `docs/RELEASING.md` for the manual signing and notarization
+steps — and use `--dmg-only` there, never `--dmg`, or the rebuild discards the signature you just
+stapled on.

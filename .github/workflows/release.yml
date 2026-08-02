@@ -13,6 +13,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A tag that disagrees with build.sh ships an app labelled with the wrong version, and the
+      # mislabelling is invisible until someone reports a bug against a version that never existed.
+      - name: Check the tag matches the version in build.sh
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -E '^VERSION=' build.sh | cut -d'"' -f2)"
+          if [ "v$VERSION" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} doesn't match VERSION=$VERSION in build.sh."
+            exit 1
+          fi
+          echo "OK — ${GITHUB_REF_NAME} matches build.sh."
+
+      # Tagging must not be a way to skip the tests. This app's whole claim is that its numbers are
+      # right, and a release is exactly when that stops being checkable after the fact.
       - name: Test
         run: swift test
 
@@ -22,10 +36,10 @@ jobs:
       - name: Verify the DMG
         run: test -f build/Vantage.dmg
 
-      # The DMG from CI is ad-hoc signed, not notarized — CI never sees a Developer ID. The release
-      # is created as a DRAFT so the maintainer can sign, notarize, and staple locally
-      # (docs/RELEASING.md), replace the asset, and then publish. This matters more here than in a
-      # typical app: ad-hoc signed builds can't register for notifications, so the morning
+      # The DMG from CI is ad-hoc signed, not notarized — CI never sees a Developer ID, by design.
+      # The release is created as a DRAFT so the maintainer can sign, notarize, and staple locally
+      # (docs/RELEASING.md), replace the asset, and then publish. That matters more here than for
+      # most apps: ad-hoc signed builds can't register for notifications, so the morning
       # notification only works in a properly signed release.
       - name: Create draft release
         env:

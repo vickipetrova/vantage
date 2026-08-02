@@ -84,7 +84,9 @@ public final class FX {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         config.urlCache = nil
-        session = URLSession(configuration: config)
+        // Redirect-refusing for the same reason as the App Store Connect client: two destinations
+        // is a promise, and a 302 would quietly make it three.
+        session = URLSession(configuration: config, delegate: NoRedirects.shared, delegateQueue: nil)
     }
 
     /// The cached table, however old. Used to render immediately at launch and to survive a failed

@@ -15,6 +15,13 @@ swift test          # VantageCore
 open build/Vantage.app
 ```
 
+Building needs only the Command Line Tools. **Running the tests needs full Xcode** — the tests use
+XCTest and the Command Line Tools don't ship that framework. If `swift test` can't find XCTest,
+that's why, and it isn't a problem with your checkout.
+
+`swift run` won't work: it produces a bare binary with no `Info.plist`, so no `LSUIElement`, no
+login-item identity and no notification registration. Always test through `./build.sh`.
+
 Build from the latest `main` so you're not fixing something that already changed.
 
 ## What's welcome
@@ -35,6 +42,7 @@ them**; the shape of the discrepancy is usually enough.
   App Store Connect OpenAPI SDK, which is a lot of generated surface for one endpoint.
 - **Anything that logs, caches to disk, or transmits a credential.** See below.
 - **A third network destination.** No analytics, no telemetry, no update checks, no crash reporting.
+  The two we have refuse redirects; keep it that way.
 - **`Double` anywhere near money.**
 - **An Xcode project.** It would make `build.sh` a lie.
 - **Estimated or extrapolated "today" figures.** Apple doesn't publish today's sales. Guessing at
@@ -53,6 +61,10 @@ them**; the shape of the discrepancy is usually enough.
 5. **Keep `MenuController` provider-agnostic.** It renders `DaySales`. App Store Connect specifics
    belong in `ASCClient`.
 6. **Match the surrounding style.** Comments explain *why*, not *what*.
+7. **Fixtures are synthetic.** Hand-written, small enough to read, derived from Apple's documented
+   format — never from a real report, even redacted. But *do* check new parsing against a real one
+   locally before opening the PR: every parser bug found so far was invisible to fixtures that were
+   tidier than reality.
 
 `CLAUDE.md` has the architecture map; `docs/REPORT_FORMAT.md` has the verified report reference with
 sources. Both are useful whether or not you use Claude Code.
