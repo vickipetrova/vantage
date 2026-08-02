@@ -154,9 +154,13 @@ public enum SalesError: LocalizedError, Equatable {
         switch self {
         case .noCredentials:
             return "No App Store Connect key yet — open Settings to add one."
-        case .unauthorized(let detail):
-            return detail
-                ?? "App Store Connect rejected the key. Check the Issuer ID, Key ID, and .p8 file."
+        case .unauthorized:
+            // Apple's 401 body is deliberately ignored. It reads "Provide a properly configured
+            // and signed bearer token, and make sure that it has not expired…" — boilerplate that
+            // names none of the four values the user actually has to check, and that's the only
+            // useful thing to say here.
+            return "App Store Connect rejected the key. Check the Issuer ID, Key ID, and .p8 file "
+                + "— all three have to come from the same key."
         case .forbidden(let detail):
             guard let detail else {
                 return "That key can't read sales reports. It needs the Sales and Reports role."
@@ -202,6 +206,19 @@ public enum ASCErrorBody {
         if !vendorNumber.isEmpty {
             message = message.replacingOccurrences(of: vendorNumber, with: "<vendor number>")
         }
+
+        // Apple appends "Learn more about … https://developer.apple.com/…" to several of these.
+        // A menu row can't be clicked through to a URL, and a URL that hits the length cap
+        // mid-path reads as a broken string rather than as a link.
+        if let learnMore = message.range(of: " Learn more", options: .caseInsensitive) {
+            message = String(message[..<learnMore.lowerBound])
+        }
+        if let url = message.range(of: "http", options: .caseInsensitive) {
+            message = String(message[..<url.lowerBound])
+        }
+        message = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return nil }
+
         if message.count > 160 {
             message = String(message.prefix(160)) + "…"
         }

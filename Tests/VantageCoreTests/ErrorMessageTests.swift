@@ -9,6 +9,57 @@ final class ErrorMessageTests: XCTestCase {
         Data(#"{"errors":[{"status":"403","code":"FORBIDDEN_ERROR","title":"\#(title)","detail":"\#(detail)"}]}"#.utf8)
     }
 
+    /// Apple appends a URL to several of these. A menu row can't be clicked through, and a URL
+    /// truncated mid-path by the length cap reads as a broken string.
+    func testStripsLearnMoreTailsAndURLs() {
+        let summary = ASCErrorBody.summary(
+            from: body("Provide a properly configured and signed bearer token. Learn more about "
+                       + "Generating Tokens https://developer.apple.com/documentation/x"),
+            redacting: "12345678")
+        XCTAssertEqual(summary, "Provide a properly configured and signed bearer token.")
+    }
+
+    func testStripsABareURLWithNoLearnMorePrefix() {
+        let summary = ASCErrorBody.summary(from: body("Something failed. https://example.com/x"),
+                                           redacting: "1")
+        XCTAssertEqual(summary, "Something failed.")
+    }
+
+    func testADetailThatIsNothingButAURLIsDiscarded() {
+        XCTAssertNil(ASCErrorBody.summary(from: body("https://developer.apple.com/x",
+                                                     title: ""), redacting: "1"))
+    }
+
+    /// Apple's 401 body names none of the four values the user has to check, so it's replaced
+    /// wholesale rather than shown.
+    func testUnauthorizedIgnoresApplesBoilerplateAndNamesTheValues() {
+        let message = SalesError.unauthorized(
+            detail: "Provide a properly configured and signed bearer token").errorDescription!
+        XCTAssertTrue(message.contains("Issuer ID"), message)
+        XCTAssertTrue(message.contains("Key ID"), message)
+        XCTAssertTrue(message.contains(".p8"), message)
+        XCTAssertFalse(message.contains("bearer"), message)
+    }
+
+    // MARK: - Aborting early
+
+    /// A credential failure repeats for every date, so grinding through thirty of them is a minute
+    /// of "Loading…" before the user is told their key is wrong.
+    func testCredentialFailuresAreFatalToABackfill() {
+        XCTAssertTrue(Backfill.isFatal(SalesError.unauthorized(detail: nil)))
+        XCTAssertTrue(Backfill.isFatal(SalesError.forbidden(detail: nil)))
+        XCTAssertTrue(Backfill.isFatal(SalesError.noCredentials))
+    }
+
+    /// Temporary failures are not: the days already fetched are worth keeping, and a flaky
+    /// connection often recovers inside the same run.
+    func testTemporaryFailuresAreNotFatal() {
+        XCTAssertFalse(Backfill.isFatal(SalesError.rateLimited))
+        XCTAssertFalse(Backfill.isFatal(SalesError.network))
+        XCTAssertFalse(Backfill.isFatal(SalesError.badReport))
+        XCTAssertFalse(Backfill.isFatal(SalesError.http(500, detail: nil)))
+    }
+
     func testPrefersApplesDetailOverItsGenericTitle() {
         let summary = ASCErrorBody.summary(
             from: body("This request requires an in-effect agreement that has not been signed or has expired."),

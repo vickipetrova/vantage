@@ -19,6 +19,19 @@ public final class Backfill {
         self.store = store
     }
 
+    /// Whether a failure is about the credentials rather than the date, and so will repeat for
+    /// every remaining request.
+    ///
+    /// Rate limiting is deliberately not fatal: it's temporary, and the days already fetched are
+    /// worth keeping. Network failures aren't either — a flaky connection often recovers within
+    /// the same run.
+    static func isFatal(_ error: Error) -> Bool {
+        switch error as? SalesError {
+        case .noCredentials, .unauthorized, .forbidden: return true
+        default: return false
+        }
+    }
+
     /// Fetches every date in `dates` that needs it, newest first, and reports each day as it lands.
     ///
     /// Newest first because the menu bar shows yesterday: the number the user is actually waiting
@@ -68,6 +81,15 @@ public final class Backfill {
                 // rate-limit or a blip partway through a backfill is common. The first error is
                 // carried to the end so the menu can still say something went wrong.
                 carriedError = carriedError ?? error
+
+                // Unless the failure is about the credentials rather than the date, in which case
+                // every remaining request will fail the same way. Grinding through twenty-nine
+                // more is a minute of the user staring at "Loading…" before being told their key
+                // is wrong — and a minute of pointless traffic at Apple.
+                if Backfill.isFatal(error) {
+                    completion(carriedError)
+                    return
+                }
             }
 
             guard index + 1 < dates.count else {
