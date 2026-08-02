@@ -64,9 +64,8 @@ final class MenuController: NSObject, NSMenuDelegate {
             return
         }
 
-        let money = converted(latest.proceeds)
         let units = Metric.units(in: latest, metrics: Prefs.metrics)
-        let text = "\(Fmt.moneyCompact(money.converted, currency: Prefs.displayCurrency))"
+        let text = money(latest.proceeds, compact: true).headline
             + " · \(Fmt.downloadsWithArrow(units))"
 
         // Monospaced digits so the title doesn't shuffle sideways as the numbers tick over.
@@ -75,16 +74,47 @@ final class MenuController: NSObject, NSMenuDelegate {
         ])
     }
 
-    private func converted(_ proceeds: [String: Decimal])
-        -> (converted: Decimal, unconverted: [String: Decimal]) {
+    /// What to print for a bag of per-currency proceeds, and what to say underneath it.
+    private struct MoneyText {
+        let headline: String
+        /// Lines the dropdown adds to account for anything the headline doesn't cover.
+        let notes: [String]
+        /// The converted total, for ranking apps against each other.
+        let sortKey: Decimal
+    }
+
+    /// Formats proceeds, degrading honestly when rates are missing.
+    ///
+    /// With rates: one figure in the display currency, marked `≈`, plus a note naming any currency
+    /// the ECB doesn't publish. Without rates: the largest single currency **in its own currency**
+    /// plus a count of the others.
+    ///
+    /// What it must never do is print a converted-looking zero. An earlier version returned 0 when
+    /// there was no rate table, so a day with real revenue rendered as `≈ $0.00` — indistinguishable
+    /// from a day that earned nothing.
+    private func money(_ proceeds: [String: Decimal], compact: Bool = false) -> MoneyText {
+        let format = compact ? Fmt.moneyCompact : Fmt.money
+        let nonZero = proceeds.filter { $0.value != 0 }
+
         guard let rates else {
-            // No rate table yet. Showing the largest single currency beats showing nothing, and
-            // the dropdown says why the total isn't a total.
-            let largest = proceeds.max { abs($0.value) < abs($1.value) }
-            guard let largest else { return (0, [:]) }
-            return (0, [largest.key: largest.value])
+            let ranked = nonZero.sorted { abs($0.value) > abs($1.value) }
+            guard let largest = ranked.first else {
+                return MoneyText(headline: format(0, Prefs.displayCurrency), notes: [], sortKey: 0)
+            }
+            let others = ranked.count - 1
+            return MoneyText(
+                headline: format(largest.value, largest.key),
+                notes: others > 0
+                    ? ["+ \(others) other \(others == 1 ? "currency" : "currencies")"] : [],
+                sortKey: largest.value)
         }
-        return rates.convert(proceeds, to: Prefs.displayCurrency)
+
+        let (converted, unconverted) = rates.convert(nonZero, to: Prefs.displayCurrency)
+        let notes = unconverted.sorted { $0.key < $1.key }.map {
+            "+ \(Fmt.money($0.value, currency: $0.key)) — no ECB rate"
+        }
+        return MoneyText(headline: "≈ " + format(converted, Prefs.displayCurrency),
+                         notes: notes, sortKey: converted)
     }
 
     // MARK: - Dropdown
@@ -117,9 +147,9 @@ final class MenuController: NSObject, NSMenuDelegate {
         guard let latest = days.first else { return }
         menu.addItem(header("YESTERDAY — \(Fmt.reportDate(latest.date))"))
 
-        let money = converted(latest.proceeds)
+        let total = money(latest.proceeds)
         let units = Metric.units(in: latest, metrics: Prefs.metrics)
-        menu.addItem(row("\(approx(money.converted)) · \(Fmt.downloadsWithArrow(units))"))
+        menu.addItem(row("\(total.headline) · \(Fmt.downloadsWithArrow(units))"))
 
         // Against the trailing week, excluding the day itself — comparing a day to an average it's
         // part of flattens exactly the spike worth noticing.
@@ -132,20 +162,18 @@ final class MenuController: NSObject, NSMenuDelegate {
         if latest.origin == .assumedZero {
             menu.addItem(row("No report published — recorded as zero"))
         }
-        for (currency, amount) in money.unconverted.sorted(by: { $0.key < $1.key }) {
-            menu.addItem(row("+ \(Fmt.money(amount, currency: currency)) not converted"))
-        }
+        for note in total.notes { menu.addItem(row(note)) }
     }
 
     private func buildApps(_ menu: NSMenu) {
         guard let latest = days.first, !latest.apps.isEmpty else { return }
         menu.addItem(.separator())
 
-        let ranked = latest.apps.sorted { converted($0.proceeds).converted > converted($1.proceeds).converted }
+        let ranked = latest.apps.sorted { money($0.proceeds).sortKey > money($1.proceeds).sortKey }
         for app in ranked.prefix(Self.appRowLimit) {
-            let money = converted(app.proceeds).converted
             let units = Metric.units(in: app, metrics: Prefs.metrics)
-            menu.addItem(row("\(app.title)   \(approx(money)) · \(Fmt.downloadsWithArrow(units))"))
+            menu.addItem(row("\(app.title)   \(money(app.proceeds).headline)"
+                             + " · \(Fmt.downloadsWithArrow(units))"))
         }
         if ranked.count > Self.appRowLimit {
             menu.addItem(row("+\(ranked.count - Self.appRowLimit) more"))
@@ -161,10 +189,11 @@ final class MenuController: NSObject, NSMenuDelegate {
             for day in window {
                 for (currency, amount) in day.proceeds { totals[currency, default: 0] += amount }
             }
-            let money = converted(totals)
+            let total = money(totals)
             let units = Metric.units(in: window, metrics: Prefs.metrics)
             menu.addItem(header(label))
-            menu.addItem(row("\(approx(money.converted)) · \(Fmt.downloadsWithArrow(units))"))
+            menu.addItem(row("\(total.headline) · \(Fmt.downloadsWithArrow(units))"))
+            for note in total.notes { menu.addItem(row(note)) }
         }
     }
 
@@ -196,12 +225,6 @@ final class MenuController: NSObject, NSMenuDelegate {
                 menu.addItem(row(line))
             }
         }
-    }
-
-    /// Money in the dropdown always carries the `≈`: it's a conversion at daily reference rates,
-    /// and Apple's monthly financial reports are the authority.
-    private func approx(_ amount: Decimal) -> String {
-        "≈ " + Fmt.money(amount, currency: Prefs.displayCurrency)
     }
 
     // MARK: - Metrics submenu
