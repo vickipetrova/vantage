@@ -17,8 +17,16 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     private let issuerField = NSTextField()
     private let keyIDField = NSTextField()
     private let vendorField = NSTextField()
-    private let keyStatus = NSTextField(labelWithString: "")
     private let saveStatus = NSTextField(labelWithString: "")
+    private let chooseKeyButton = NSButton()
+
+    /// One status label per credential, showing what the Keychain actually holds right now.
+    ///
+    /// Four separate indicators rather than one summary line, because the summary line was
+    /// actively misleading: after saving three of four values it said "Still missing: Vendor
+    /// Number" in red, which reads as "nothing saved" when in fact the private key had stored
+    /// fine. Per-field state can't lie about the fields it isn't talking about.
+    private var indicators: [KeychainStore.Key: NSTextField] = [:]
 
     /// Held only between choosing the file and pressing Save.
     private var pendingPrivateKey: String?
@@ -67,28 +75,24 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             ])
         stack.addArrangedSubview(help)
 
-        stack.addArrangedSubview(field("Issuer ID", issuerField,
+        stack.addArrangedSubview(field("Issuer ID", issuerField, .issuerID,
                                        placeholder: "57246542-96fe-1a63-e053-0824d011072a"))
-        stack.addArrangedSubview(field("Key ID", keyIDField, placeholder: "2X9R4HXF34"))
+        stack.addArrangedSubview(field("Key ID", keyIDField, .keyID, placeholder: "2X9R4HXF34"))
         stack.addArrangedSubview(caption(
             "Both are on the Users and Access › Integrations page. The Issuer ID is at the top of "
             + "that page; the Key ID is the column next to your key's name."))
 
-        let keyRow = NSStackView()
-        keyRow.orientation = .horizontal
-        keyRow.spacing = 8
-        let choose = NSButton(title: "Choose .p8 file…", target: self,
-                              action: #selector(choosePrivateKey))
-        choose.bezelStyle = .rounded
-        keyStatus.textColor = .secondaryLabelColor
-        keyStatus.font = .systemFont(ofSize: 11)
-        keyRow.addArrangedSubview(choose)
-        keyRow.addArrangedSubview(keyStatus)
-        stack.addArrangedSubview(labelled("Private key", keyRow))
+        chooseKeyButton.title = "Choose .p8 file…"
+        chooseKeyButton.target = self
+        chooseKeyButton.action = #selector(choosePrivateKey)
+        chooseKeyButton.bezelStyle = .rounded
+        stack.addArrangedSubview(labelled("Private key", chooseKeyButton, .privateKey))
 
-        stack.addArrangedSubview(field("Vendor Number", vendorField, placeholder: "8-digit number"))
+        stack.addArrangedSubview(field("Vendor Number", vendorField, .vendorNumber,
+                                       placeholder: "8-digit number"))
         stack.addArrangedSubview(caption(
-            "App Store Connect › Payments and Financial Reports, top left."))
+            "App Store Connect › Payments and Financial Reports › Reports — top left, under your "
+            + "Legal Entity Name."))
 
         let buttons = NSStackView()
         buttons.orientation = .horizontal
@@ -130,23 +134,52 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         return label
     }
 
-    private func field(_ title: String, _ input: NSTextField, placeholder: String) -> NSView {
+    private func field(_ title: String, _ input: NSTextField, _ key: KeychainStore.Key,
+                       placeholder: String) -> NSView {
         input.placeholderString = placeholder
         input.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        input.widthAnchor.constraint(equalToConstant: 320).isActive = true
-        return labelled(title, input)
+        input.widthAnchor.constraint(equalToConstant: 250).isActive = true
+        return labelled(title, input, key)
     }
 
-    private func labelled(_ title: String, _ control: NSView) -> NSView {
+    private func labelled(_ title: String, _ control: NSView,
+                          _ key: KeychainStore.Key) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.spacing = 8
         let label = NSTextField(labelWithString: title)
         label.alignment = .right
         label.widthAnchor.constraint(equalToConstant: 96).isActive = true
+
+        let indicator = NSTextField(labelWithString: "")
+        indicator.font = .systemFont(ofSize: 11)
+        indicator.lineBreakMode = .byTruncatingTail
+        indicators[key] = indicator
+
         row.addArrangedSubview(label)
         row.addArrangedSubview(control)
+        row.addArrangedSubview(indicator)
         return row
+    }
+
+    /// Repaints all four indicators from the Keychain, plus whatever is staged but unsaved.
+    private func refreshIndicators() {
+        for key in KeychainStore.Key.allCases {
+            guard let indicator = indicators[key] else { continue }
+            if key == .privateKey, pendingPrivateKey != nil,
+               KeychainStore.value(for: key) == nil {
+                indicator.stringValue = "Ready to save"
+                indicator.textColor = .secondaryLabelColor
+            } else if KeychainStore.value(for: key) != nil {
+                indicator.stringValue = "✓ Stored"
+                indicator.textColor = .systemGreen
+            } else {
+                indicator.stringValue = "Needed"
+                indicator.textColor = .secondaryLabelColor
+            }
+        }
+        chooseKeyButton.title = KeychainStore.value(for: .privateKey) == nil
+            ? "Choose .p8 file…" : "Replace .p8 file…"
     }
 
     // MARK: - Loading and saving
@@ -157,36 +190,43 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         issuerField.stringValue = KeychainStore.value(for: .issuerID) ?? ""
         keyIDField.stringValue = KeychainStore.value(for: .keyID) ?? ""
         vendorField.stringValue = KeychainStore.value(for: .vendorNumber) ?? ""
-        keyStatus.stringValue = KeychainStore.value(for: .privateKey) == nil
-            ? "No key stored" : "Stored in Keychain"
         saveStatus.stringValue = ""
         pendingPrivateKey = nil
+        refreshIndicators()
     }
 
     @objc private func choosePrivateKey() {
         let panel = NSOpenPanel()
         panel.title = "Choose your App Store Connect private key"
         panel.message = "The AuthKey_XXXXXXXXXX.p8 file you downloaded from App Store Connect."
-        panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
+        // Deliberately no `allowedContentTypes`: `.p8` has no registered UTI, and constraining the
+        // panel is a good way to grey out the one file the user came here to pick.
 
-        guard panel.runModal() == .OK, let url = panel.url,
-              let contents = try? String(contentsOf: url, encoding: .utf8)
-        else { return }
+        guard panel.runModal() == .OK, let url = panel.url else {
+            report("")  // Cancelled. Not a failure, and not worth a message.
+            return
+        }
+        guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+            // Never silent. macOS can refuse a read of ~/Downloads or ~/Desktop, and a picker that
+            // appears to do nothing is indistinguishable from a broken button.
+            report("Couldn't read that file. Try moving it somewhere else and choosing again.",
+                   isError: true)
+            return
+        }
 
         // Read once, here, and keep only the contents. The path is deliberately not retained: the
         // file can be deleted or moved back into a password manager afterwards, and Vantage should
         // never reach for it again.
         guard contents.contains("PRIVATE KEY") else {
-            keyStatus.stringValue = "That doesn't look like a .p8 private key"
-            keyStatus.textColor = .systemRed
+            report("That file isn't a private key — look for AuthKey_XXXXXXXXXX.p8.", isError: true)
             return
         }
         pendingPrivateKey = contents
-        keyStatus.stringValue = "Ready to save"
-        keyStatus.textColor = .secondaryLabelColor
+        refreshIndicators()
+        report("Key loaded. Press Save to store it in your Keychain.")
     }
 
     @objc private func save() {
@@ -197,18 +237,18 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             KeychainStore.set(pendingPrivateKey, for: .privateKey)
         }
         pendingPrivateKey = nil
+        refreshIndicators()
 
+        // Whatever was entered is now saved — say so first. The old copy led with what was still
+        // missing, which read as though the save itself had failed.
         let missing = KeychainStore.Key.allCases.filter { KeychainStore.value(for: $0) == nil }
         if missing.isEmpty {
-            saveStatus.stringValue = "Saved to Keychain"
-            saveStatus.textColor = .secondaryLabelColor
+            report("Saved. Fetching your report…")
         } else {
             // Names the empty fields, never the filled ones' values.
-            saveStatus.stringValue = "Still missing: \(missing.map(label).joined(separator: ", "))"
-            saveStatus.textColor = .systemRed
+            report("Saved what you entered. Still need: "
+                   + missing.map(label).joined(separator: ", "))
         }
-        keyStatus.stringValue = KeychainStore.value(for: .privateKey) == nil
-            ? "No key stored" : "Stored in Keychain"
         onCredentialsChanged?()
     }
 
@@ -218,11 +258,14 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         keyIDField.stringValue = ""
         vendorField.stringValue = ""
         pendingPrivateKey = nil
-        keyStatus.stringValue = "No key stored"
-        keyStatus.textColor = .secondaryLabelColor
-        saveStatus.stringValue = "Removed from Keychain"
-        saveStatus.textColor = .secondaryLabelColor
+        refreshIndicators()
+        report("Removed from Keychain.")
         onCredentialsChanged?()
+    }
+
+    private func report(_ message: String, isError: Bool = false) {
+        saveStatus.stringValue = message
+        saveStatus.textColor = isError ? .systemRed : .secondaryLabelColor
     }
 
     private func label(_ key: KeychainStore.Key) -> String {

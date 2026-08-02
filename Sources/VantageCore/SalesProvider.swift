@@ -95,10 +95,13 @@ public protocol SalesProvider {
 /// string that might. Error text ends up in the dropdown and in screenshots attached to issues.
 public enum SalesError: LocalizedError, Equatable {
     case noCredentials
-    case unauthorized
-    case forbidden
+    /// Apple refused the request. `detail` is Apple's own explanation, already redacted of the
+    /// vendor number — without it, a 403 caused by the key's role and a 403 caused by a mistyped
+    /// vendor number are the same message, and the user has no way to tell which value to fix.
+    case unauthorized(detail: String?)
+    case forbidden(detail: String?)
     case rateLimited
-    case http(Int)
+    case http(Int, detail: String?)
     case network
     case badReport
 
@@ -106,18 +109,57 @@ public enum SalesError: LocalizedError, Equatable {
         switch self {
         case .noCredentials:
             return "No App Store Connect key yet — open Settings to add one."
-        case .unauthorized:
-            return "App Store Connect rejected the key. Check the Issuer ID, Key ID, and .p8 file."
-        case .forbidden:
-            return "That key can't read sales reports. It needs the Sales and Reports role."
+        case .unauthorized(let detail):
+            return detail
+                ?? "App Store Connect rejected the key. Check the Issuer ID, Key ID, and .p8 file."
+        case .forbidden(let detail):
+            guard let detail else {
+                return "That key can't read sales reports. It needs the Sales and Reports role."
+            }
+            // Apple's agreement refusal is accurate but doesn't say where to go, and the obvious
+            // guess — the key's role — is the wrong place to look. Sales reports need an in-effect
+            // Paid Apps Agreement no matter how the key is configured.
+            if detail.range(of: "agreement", options: .caseInsensitive) != nil {
+                return detail + " Sign it in App Store Connect › Business (Account Holder only)."
+            }
+            return detail
         case .rateLimited:
             return "App Store Connect is rate limiting. Trying again later."
-        case .http(let code):
-            return "App Store Connect returned HTTP \(code)."
+        case .http(let code, let detail):
+            return detail ?? "App Store Connect returned HTTP \(code)."
         case .network:
             return "Can't reach api.appstoreconnect.apple.com."
         case .badReport:
             return "Couldn't read the report Apple returned."
         }
+    }
+}
+
+/// Apple's `ErrorResponse` body, reduced to something safe to put on screen.
+///
+/// Apple's `detail` strings are about the request, not the caller — but they can quote a parameter
+/// back, and one of those parameters is the vendor number. Anything that reaches the menu can reach
+/// a screenshot in a GitHub issue, so the vendor number is redacted before the string escapes this
+/// type, and the length is capped so a runaway body can't push the rest of the menu off screen.
+public enum ASCErrorBody {
+    public static func summary(from data: Data, redacting vendorNumber: String) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let errors = object["errors"] as? [[String: Any]],
+              let first = errors.first
+        else { return nil }
+
+        let title = first["title"] as? String
+        let detail = first["detail"] as? String
+        // Apple's `title` is generic ("The request is forbidden") and `detail` is the useful half
+        // ("Invalid vendor number specified"), so prefer detail and fall back.
+        guard var message = detail ?? title else { return nil }
+
+        if !vendorNumber.isEmpty {
+            message = message.replacingOccurrences(of: vendorNumber, with: "<vendor number>")
+        }
+        if message.count > 160 {
+            message = String(message.prefix(160)) + "…"
+        }
+        return message
     }
 }
