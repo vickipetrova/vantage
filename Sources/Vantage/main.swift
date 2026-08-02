@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)  // Menu bar only, no dock icon.
+        MainMenu.install()  // Without this, ⌘V doesn't work in the Settings fields.
 
         menuController.onRefresh = { [weak self] in self?.refresh() }
         menuController.onSettings = { [weak self] in self?.settingsWindow.show() }
