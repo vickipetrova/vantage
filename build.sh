@@ -12,6 +12,15 @@ MIN_MACOS="13.0"
 APP="build/$APP_NAME.app"
 BIN="$APP/Contents/MacOS/$APP_NAME"
 
+MODE="${1:-}"
+
+# --dmg-only packages the DMG around the bundle that is already in build/, without rebuilding it.
+# Releasing signs and staples the .app first; rebuilding at that point would throw both away and
+# wrap an ad-hoc signed app in a notarized image. See docs/RELEASING.md.
+if [[ "$MODE" == "--dmg-only" ]]; then
+  [[ -d "$APP" ]] || { echo "No $APP to package. Run ./build.sh first." >&2; exit 1; }
+else
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -48,11 +57,15 @@ PLIST
 # Signing and notarizing a release is a manual maintainer step: see docs/RELEASING.md.
 # xattr first: extended attributes (quarantine, Finder info) make codesign refuse the bundle.
 xattr -cr "$APP"
-codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+# Not swallowed: on Apple Silicon an unsigned bundle dies at launch, and hiding the reason here
+# turns a one-line error into an app that simply doesn't start.
+codesign --force --sign - "$APP"
 
 echo "Built $APP"
 
-if [[ "${1:-}" == "--dmg" ]]; then
+fi
+
+if [[ "$MODE" == "--dmg" || "$MODE" == "--dmg-only" ]]; then
   echo "Packaging DMG…"
   DMG="build/$APP_NAME.dmg"
   STAGE="build/dmg-stage"

@@ -61,16 +61,15 @@ rm build/app-notarize.zip
 
 # Repackage the DMG around the now-signed app, then sign and notarize the image itself —
 # that's the check a downloader actually hits.
-./build.sh --dmg
+#
+# --dmg-only, not --dmg: the latter rebuilds the bundle from scratch, which would throw away the
+# signature and stapled ticket applied just above and wrap an ad-hoc signed app inside a notarized
+# image. The result passes a spot check and fails for everyone who drags the app out of the DMG.
+./build.sh --dmg-only
 codesign --force --timestamp --sign "$SIGN_ID" build/Vantage.dmg
 xcrun notarytool submit build/Vantage.dmg --keychain-profile "vantage" --wait
 xcrun stapler staple build/Vantage.dmg
 ```
-
-> [!WARNING]
-> The second `./build.sh --dmg` rebuilds the app bundle from scratch, discarding the signature and
-> stapled ticket applied above. Re-run the `codesign`/`notarytool`/`stapler` steps for the `.app`
-> after it, or package the DMG by hand from the already-signed bundle.
 
 Verify before publishing:
 

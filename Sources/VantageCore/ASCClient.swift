@@ -12,13 +12,14 @@ public struct ASCClient: SalesProvider {
 
     private static let host = "api.appstoreconnect.apple.com"
 
-    /// Ephemeral: no response of yours is written to a URL cache on disk.
+    /// Ephemeral, so no report of yours is written to a URL cache on disk, and redirect-refusing,
+    /// so the bearer token cannot be forwarded to a host this app never named.
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: config)
+        return URLSession(configuration: config, delegate: NoRedirects.shared, delegateQueue: nil)
     }()
 
     /// Where credentials come from. Injectable so tests can drive the request builder without

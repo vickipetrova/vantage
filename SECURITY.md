@@ -50,9 +50,16 @@ GET https://api.appstoreconnect.apple.com/v1/salesReports    (your reports)
 GET https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml   (currency rates)
 ```
 
+Both connections **refuse redirects outright**. Without that, a 302 from either host could send the
+next request — and, for App Store Connect, your bearer token with it — somewhere this document
+doesn't mention. Refusing redirects is what makes "two destinations" something the code enforces
+rather than a description of how it currently happens to behave.
+
 The App Store Connect request carries a freshly minted ES256 JWT, signed locally with your private
-key, valid for **20 minutes at most** — that ceiling is Apple's, and Vantage stays well under it.
-The token is minted per request batch, held in memory, and dropped. It is never written to disk.
+key. Apple rejects tokens for this endpoint that live longer than 20 minutes; Vantage issues them
+for **five**. Each token also carries a `scope` claim naming the single request it was minted for,
+so a token that somehow escaped could fetch one sales report for one date and nothing else. Tokens
+are held in memory for the request and dropped — never written to disk.
 
 The ECB request carries nothing. No token, no identifier, no app names, no numbers — it is a
 request for a public XML file of exchange rates, identical for every user in the world.
@@ -83,9 +90,22 @@ The parts worth auditing, in the order they matter:
 | `Sources/VantageCore/KeychainStore.swift` | Every read and write of a credential |
 | `Sources/VantageCore/ASCClient.swift` | JWT construction, the one request, and that the key is used and dropped |
 | `Sources/VantageCore/FX.swift` | The ECB request carries no identifying data |
+| `Sources/VantageCore/NoRedirects.swift` | Nine lines, and the reason "two destinations" is enforceable |
 
-CI fails the build if anything in `Sources/` prints or logs a credential. That grep is a backstop
-for mistakes, not the reason the guarantee holds — the reason is that nothing in the source does it.
+Two habits in the source worth knowing about, because they're the kind of thing that gets undone by
+accident:
+
+- **`Credentials` is opaque to string interpolation.** Its `description` and `debugDescription` both
+  return `Credentials(redacted)`, so writing it into a log line produces nothing useful rather than
+  everything.
+- **Apple's error text is scrubbed before it reaches the menu.** Error bodies are rendered to
+  explain failures, and Apple quotes request parameters back — one of which is your vendor number.
+  It's replaced with `<vendor number>` before the string can escape, and anything in the menu can
+  end up in a screenshot attached to an issue.
+
+CI fails the build if anything in `Sources/` prints or logs a credential, and fails if a `.p8` or a
+compressed report is ever tracked in git. Those checks are backstops for mistakes, not the reason
+the guarantees hold — the reason is that nothing in the source does it.
 
 ## Reporting a problem
 
