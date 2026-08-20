@@ -15,6 +15,8 @@ struct TrendChart: View {
 
     /// Tall enough to read a shape in, short enough that the app rows stay above the fold.
     private static let height: CGFloat = 78
+    /// Vertical breathing room so a value at the very top isn't clipped by the stroke's own width.
+    private static let inset: CGFloat = 3
 
     var body: some View {
         GeometryReader { geometry in
@@ -31,7 +33,10 @@ struct TrendChart: View {
                     // Only drawn when the series goes negative. Without it a chart running below
                     // zero looks like an ordinary one with a low patch.
                     Path { path in
-                        let y = size.height - CGFloat(zero) * size.height
+                        // Same inset the data points use, or the zero line sits a point off from
+                        // where a zero-valued point is drawn.
+                        let usable = size.height - Self.inset * 2
+                        let y = Self.inset + usable - CGFloat(zero) * usable
                         path.move(to: CGPoint(x: 0, y: y))
                         path.addLine(to: CGPoint(x: size.width, y: y))
                     }
@@ -129,11 +134,9 @@ struct TrendChart: View {
     }
 
     private func point(for entry: (index: Int, unit: Double), in size: CGSize) -> CGPoint {
-        // Inset vertically so a value at the very top isn't clipped by the stroke's own width.
-        let inset: CGFloat = 3
-        let usable = size.height - inset * 2
+        let usable = size.height - Self.inset * 2
         return CGPoint(x: x(entry.index, in: size),
-                       y: inset + usable - CGFloat(entry.unit) * usable)
+                       y: Self.inset + usable - CGFloat(entry.unit) * usable)
     }
 
     private func line(_ points: [CGPoint]) -> Path {

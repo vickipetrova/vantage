@@ -22,7 +22,19 @@ public enum Fmt {
         format(amount, currency: currency, fractionDigits: 2)
     }
 
-    private static func format(_ amount: Decimal, currency: String, fractionDigits: Int) -> String {
+    /// Currency formatters are expensive to build and there are only a handful of
+    /// (currency, precision) pairs in play, so they're built once and reused.
+    ///
+    /// A panel render formats money roughly twice per app row; at a few hundred apps that was
+    /// hundreds of `NumberFormatter` constructions per frame, and the panel rerenders every time an
+    /// app icon arrives. `NumberFormatter` is not thread-safe, so this is confined to the main
+    /// thread — which is where every caller already is, since all of them are rendering.
+    private static var currencyFormatters: [String: NumberFormatter] = [:]
+
+    private static func currencyFormatter(_ currency: String,
+                                          _ fractionDigits: Int) -> NumberFormatter {
+        let key = "\(currency)|\(fractionDigits)"
+        if let cached = currencyFormatters[key] { return cached }
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         formatter.locale = .current
@@ -31,6 +43,20 @@ public enum Fmt {
         formatter.maximumFractionDigits = fractionDigits
         // Bankers' rounding would make daily totals that don't sum to the weekly one.
         formatter.roundingMode = .halfUp
+        currencyFormatters[key] = formatter
+        return formatter
+    }
+
+    private static let unitFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = .current
+        formatter.maximumFractionDigits = 0
+        return formatter
+    }()
+
+    private static func format(_ amount: Decimal, currency: String, fractionDigits: Int) -> String {
+        let formatter = currencyFormatter(currency, fractionDigits)
         // NSDecimalNumber, not Double: the whole point of carrying Decimal this far is not to
         // hand the money to binary floating point at the last step.
         let number = NSDecimalNumber(decimal: amount)
@@ -51,11 +77,7 @@ public enum Fmt {
                 roundingMode: .plain, scale: 0,
                 raiseOnExactness: false, raiseOnOverflow: false,
                 raiseOnUnderflow: false, raiseOnDivideByZero: false))
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.locale = .current
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: rounded) ?? rounded.stringValue
+        return unitFormatter.string(from: rounded) ?? rounded.stringValue
     }
 
     /// `89↓`, for the menu bar and the per-app rows.
@@ -68,7 +90,12 @@ public enum Fmt {
     /// Percentages of a zero baseline are undefined, not infinite, and a day's first sale is not a
     /// hundred-percent rise — so those cases say "new" rather than inventing a number.
     public static func change(from baseline: Decimal, to value: Decimal) -> String {
-        guard baseline != 0 else { return value == 0 ? "—" : "new" }
+        // A week that only refunded is not growth. "new" is for a first sale, so it needs the
+        // value to actually be positive.
+        guard baseline != 0 else {
+            if value == 0 { return "—" }
+            return value > 0 ? "new" : "down from nothing"
+        }
         let ratio = (value - baseline) / abs(baseline) * 100
         let rounded = NSDecimalNumber(decimal: ratio).rounding(
             accordingToBehavior: NSDecimalNumberHandler(

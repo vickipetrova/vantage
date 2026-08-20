@@ -69,7 +69,7 @@ final class OverviewModelTests: XCTestCase {
         let model = build(days)
         // Against a baseline of 10 that's +900%. Had yesterday been included the baseline would be
         // 21.25 and the figure a much tamer +371%.
-        XCTAssertEqual(model.headline?.comparison, "vs 7-day average: ▲ 900%")
+        XCTAssertEqual(model.headline?.comparison, "Downloads vs 7-day average: ▲ 900%")
     }
 
     func testComparisonIsAbsentWithOnlyOneDay() {
@@ -83,7 +83,7 @@ final class OverviewModelTests: XCTestCase {
         for offset in 1...7 { days.append(day(yesterday.adding(days: -offset), units: 10)) }
         // An eighth day far outside the window must not move the average.
         days.append(day(yesterday.adding(days: -8), units: 100_000))
-        XCTAssertEqual(build(days).headline?.comparison, "vs 7-day average: — level")
+        XCTAssertEqual(build(days).headline?.comparison, "Downloads vs 7-day average: — level")
     }
 
     // MARK: - Origin
@@ -251,7 +251,7 @@ final class OverviewModelTests: XCTestCase {
         var days = (0..<7).map { day(yesterday.adding(days: -$0), units: 20) }
         days += (7..<14).map { day(yesterday.adding(days: -$0), units: 10) }
         // 140 this week against 70 last week.
-        XCTAssertEqual(run(days, .week).headline?.comparison, "vs previous 7 days: ▲ 100%")
+        XCTAssertEqual(run(days, .week).headline?.comparison, "Downloads vs previous 7 days: ▲ 100%")
     }
 
     func testComparisonIsAbsentWithoutAPrecedingWindow() {
@@ -297,7 +297,146 @@ final class OverviewModelTests: XCTestCase {
         XCTAssertEqual(run(days, .week).apps.first?.title, "New Name")
     }
 
+    // MARK: - Regressions: windows are date-scoped, not positional
+
+    /// The worst bug found in v0.2 review.
+    ///
+    /// `days.prefix(7)` looks equivalent to "the last seven days" and isn't: the cache can have
+    /// holes, and taking the first seven *entries* reaches back past the range. This produced a
+    /// five-figure total under a heading naming a week that contained twenty dollars.
+    func testARangeTotalsOnlyTheDaysInsideIt() {
+        // Two recent days, a five-day hole, then a run of very large days outside the week.
+        var days = [day(yesterday, units: 1, proceeds: ["USD": 10]),
+                    day(yesterday.adding(days: -1), units: 1, proceeds: ["USD": 10])]
+        for offset in 9...14 {
+            days.append(day(yesterday.adding(days: -offset), units: 100,
+                            proceeds: ["USD": 1000]))
+        }
+
+        let week = run(days, .week)
+        XCTAssertEqual(week.headline?.units, 2, "Only the two days inside the week count")
+        XCTAssertEqual(week.headline?.money.sortKey, 20)
+    }
+
+    func testTheWindowCardsAreDateScopedToo() {
+        var days = [day(yesterday, units: 1, proceeds: ["USD": 10])]
+        for offset in 9...14 {
+            days.append(day(yesterday.adding(days: -offset), units: 100,
+                            proceeds: ["USD": 1000]))
+        }
+        let sevenDayCard = run(days, .yesterday).windows.first { $0.label == "Last 7 days" }
+        XCTAssertEqual(sevenDayCard?.money.sortKey, 10)
+    }
+
+    /// A range that isn't fully cached says so, rather than reading as a quiet week.
+    func testAPartlyCachedRangeReportsItsCoverage() {
+        let days = [day(yesterday, units: 1), day(yesterday.adding(days: -1), units: 1)]
+        XCTAssertEqual(run(days, .week).headline?.coverage, "2 of 7 days cached")
+        XCTAssertNil(run(days, .yesterday).headline?.coverage, "One day, one day cached")
+    }
+
+    // MARK: - Regressions: comparisons average, and are date-scoped
+
+    /// Eight flat days used to read as "▲ 600%": seven days of 20 were compared against the single
+    /// earlier day that happened to be on disk. Comparing per-day averages makes a partial window
+    /// scale correctly.
+    func testAFlatRunDoesNotReadAsGrowthWhenThePreviousWindowIsShort() {
+        let days = (0..<8).map { day(yesterday.adding(days: -$0), units: 20) }
+        XCTAssertEqual(run(days, .week).headline?.comparison,
+                       "Downloads vs previous 7 days: — level")
+    }
+
+    /// The previous window is the seven days before this one — not "whatever comes next in the
+    /// array", which a hole would otherwise fill with much older days.
+    func testThePreviousWindowIsSelectedByDate() {
+        // This week: 7 days of 20. Then a gap. Then very old, very large days.
+        var days = (0..<7).map { day(yesterday.adding(days: -$0), units: 20) }
+        for offset in 20...25 {
+            days.append(day(yesterday.adding(days: -offset), units: 10_000))
+        }
+        XCTAssertNil(run(days, .week).headline?.comparison,
+                     "Nothing is cached in the preceding week, so there is nothing to compare with")
+    }
+
+    /// The divisor is the whole answer when the baseline window is partly cached: with three days
+    /// on disk, dividing by seven understates a spike by more than double. Every earlier test
+    /// supplied exactly seven prior days, so a hardcoded `/ 7` passed.
+    func testTheBaselineDividesByTheDaysActuallyCached() {
+        // Yesterday at 100. Only three of the seven prior days are cached, each at 10.
+        var days = [day(yesterday, units: 100)]
+        for offset in 1...3 { days.append(day(yesterday.adding(days: -offset), units: 10)) }
+
+        // Baseline is 30/3 = 10, so 100 is ▲ 900%. Dividing by 7 would give 4.29 and ▲ 2233%.
+        XCTAssertEqual(run(days, .yesterday).headline?.comparison,
+                       "Downloads vs 7-day average: ▲ 900%")
+    }
+
+    /// "Previous 7 days" must mean exactly that. With thirty days cached, taking everything older
+    /// than this week would silently compare against twenty-three days.
+    func testTheBaselineWindowIsBoundedAtBothEnds() {
+        // This week: 7 days of 10. Last week: 7 days of 10. Before that: very large days.
+        var days = (0..<14).map { day(yesterday.adding(days: -$0), units: 10) }
+        for offset in 14..<30 {
+            days.append(day(yesterday.adding(days: -offset), units: 10_000))
+        }
+        XCTAssertEqual(run(days, .week).headline?.comparison,
+                       "Downloads vs previous 7 days: — level")
+    }
+
+    /// The parameter contract says newest first; `build` sorts defensively, and nothing tested it.
+    func testBuildSortsItsInputRatherThanTrustingIt() {
+        let ascending = (0..<3).map { day(yesterday.adding(days: -(2 - $0)), units: Decimal($0)) }
+        // Oldest-first input. The headline must still be yesterday's figure.
+        XCTAssertEqual(run(ascending, .yesterday).headline?.units, 2)
+    }
+
+    // MARK: - Regressions: app rows keep the per-day legacy fallback
+
+    /// `Metric.units` falls back to the legacy `downloads` field when a day carries no
+    /// per-product-type tally — a per-*day* decision. Merging the window into one dictionary first
+    /// meant a single modern day made the merged tally non-empty, and every legacy day's units
+    /// silently vanished from the row while still counting in the headline above it.
+    func testAppRowsSumToTheHeadlineAcrossLegacyAndModernDays() {
+        let modern = AppSales(appleID: "1", title: "Mine", downloads: 5,
+                              proceeds: ["USD": 1], unitsByProductType: ["1": 5])
+        // No per-product-type tally: a day written by an older build.
+        let legacy = AppSales(appleID: "1", title: "Mine", downloads: 5,
+                              proceeds: ["USD": 1], unitsByProductType: [:])
+
+        var days: [DaySales] = []
+        for offset in 0..<3 {
+            days.append(DaySales(date: yesterday.adding(days: -offset), origin: .observed,
+                                 downloads: 5, proceeds: ["USD": 1], apps: [modern],
+                                 fetchedAt: now, unitsByProductType: ["1": 5]))
+        }
+        for offset in 3..<7 {
+            days.append(DaySales(date: yesterday.adding(days: -offset), origin: .observed,
+                                 downloads: 5, proceeds: ["USD": 1], apps: [legacy],
+                                 fetchedAt: now, unitsByProductType: [:]))
+        }
+
+        let week = run(days, .week)
+        XCTAssertEqual(week.headline?.units, 35)
+        XCTAssertEqual(week.apps.first?.units, 35,
+                       "A breakdown that doesn't sum to its own total is worse than no breakdown")
+    }
+
+    // MARK: - Regressions: ranking
+
+    /// Without a usable rate table, ranking on the money figure ranks by exchange rate — ¥15,000 is
+    /// about $100 and would beat $900. Units are cross-currency by construction.
+    func testWithoutRatesAppsAreRankedByUnitsRatherThanRawAmounts() {
+        let day = day(yesterday, units: 3, apps: [
+            app("1", "Yen", ["JPY": 15_000], units: 1),
+            app("2", "Dollars", ["USD": 900], units: 50),
+        ])
+        let model = OverviewModel.build(days: [day], rates: nil, error: nil, metrics: [.installs],
+                                        displayCurrency: "USD", range: .yesterday, now: now)
+        XCTAssertEqual(model.apps.map(\.title), ["Dollars", "Yen"])
+    }
+
     // MARK: - Metrics
+
 
     /// Toggling a metric changes every figure derived from units, and must do so without a refetch —
     /// the per-product-type tally is already on disk.

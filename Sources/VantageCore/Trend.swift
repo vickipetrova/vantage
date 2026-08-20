@@ -77,6 +77,9 @@ public struct TrendData: Equatable, Sendable {
     public let lowerLabel: String
     /// Set when the series can't be drawn at all, in words the panel can show.
     public let unavailable: String?
+    /// Set when the series is drawable but incomplete — some days held money with no ECB rate, so
+    /// those days are gaps rather than understated points.
+    public let note: String?
 
     public var hasData: Bool { points.contains { $0.value != nil } }
 }
@@ -100,17 +103,28 @@ public enum Trend {
         if case .proceeds = series, rates == nil {
             return TrendData(points: [], lower: 0, upper: 0, zeroUnit: nil,
                              upperLabel: "", lowerLabel: "",
-                             unavailable: "Exchange rates unavailable — can't chart proceeds")
+                             unavailable: "Exchange rates unavailable — can't chart proceeds",
+                             note: nil)
         }
 
         let byDate = Dictionary(days.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
         let dates = end.lastDays(length).sorted()
 
         var values: [ReportDate: Decimal] = [:]
+        var incomplete = false
         for date in dates {
             guard let day = byDate[date] else { continue }  // Absent stays absent.
-            values[date] = value(of: series, in: day, appleID: appleID,
+            let resolved = value(of: series, in: day, appleID: appleID,
                                  rates: rates, displayCurrency: displayCurrency)
+            guard let amount = resolved.value else {
+                // The day held money in a currency with no ECB rate. Plotting the convertible part
+                // would draw a point lower than the figure printed above the chart, with nothing to
+                // say why. A gap is the honest shape.
+                incomplete = true
+                continue
+            }
+            if resolved.partial { incomplete = true }
+            values[date] = amount
         }
 
         let present = values.values
@@ -133,7 +147,10 @@ public enum Trend {
                          zeroUnit: lower < 0 && span != 0 ? Self.double(-lower / span) : nil,
                          upperLabel: label(upper, for: series, displayCurrency: displayCurrency),
                          lowerLabel: label(lower, for: series, displayCurrency: displayCurrency),
-                         unavailable: nil)
+                         unavailable: nil,
+                         note: incomplete
+                            ? "Some days include currencies with no ECB rate and aren't charted"
+                            : nil)
     }
 
     private static func label(_ value: Decimal, for series: TrendSeries,
@@ -146,8 +163,11 @@ public enum Trend {
         }
     }
 
+    /// One day's value. `value` is nil when the day can't be stated as a number at all; `partial`
+    /// marks a day that could be stated but left something out.
     private static func value(of series: TrendSeries, in day: DaySales, appleID: String?,
-                              rates: FXRates?, displayCurrency: String) -> Decimal {
+                              rates: FXRates?, displayCurrency: String)
+        -> (value: Decimal?, partial: Bool) {
         switch series {
         case .proceeds:
             let proceeds: [String: Decimal]
@@ -156,14 +176,21 @@ public enum Trend {
             } else {
                 proceeds = day.proceeds
             }
-            return Money.text(for: proceeds, rates: rates,
-                              displayCurrency: displayCurrency).sortKey
+            guard let rates else { return (nil, true) }
+            // Straight to the rate table rather than through `Money`, which collapses the
+            // unconverted remainder into a note the chart can't render.
+            let (converted, unconverted) = rates.convert(proceeds.filter { $0.value != 0 },
+                                                         to: displayCurrency)
+            guard unconverted.isEmpty else { return (nil, true) }
+            return (converted, false)
         case .metric(let metric):
             if let appleID {
-                guard let app = day.apps.first(where: { $0.appleID == appleID }) else { return 0 }
-                return Metric.units(in: app, metrics: [metric])
+                guard let app = day.apps.first(where: { $0.appleID == appleID }) else {
+                    return (0, false)
+                }
+                return (Metric.units(in: app, metrics: [metric]), false)
             }
-            return metric.units(in: day)
+            return (metric.units(in: day), false)
         }
     }
 

@@ -72,8 +72,11 @@ final class StatusItemController: NSObject {
     private func showMenu() {
         onWillShowMenu?()
         statusItem.menu = menu
+        // `defer`, because an attached menu is precisely the state this trick exists to avoid: with
+        // one attached, AppKit opens it on left click and never calls the button's action. An early
+        // return out of the tracking loop would make that permanent.
+        defer { statusItem.menu = nil }
         statusItem.button?.performClick(nil)
-        statusItem.menu = nil
     }
 
     // MARK: - Input

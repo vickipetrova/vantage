@@ -118,6 +118,13 @@ final class ASCTokenTests: XCTestCase {
         XCTAssertEqual(write["scope"] as? [String], ["POST /v1/customerReviewResponses"])
     }
 
+    /// Pinned as a literal. The other lifetime test asserts only Apple's 20-minute ceiling and
+    /// compares against the constant itself, so raising it to 19 minutes kept the suite green —
+    /// while SECURITY.md promises **five**.
+    func testLifetimeIsTheFiveMinutesSecurityMdPromises() {
+        XCTAssertEqual(ASCToken.lifetime, 5 * 60)
+    }
+
     /// An `ASCKey` in a log line, an error message or a crash report must produce nothing useful.
     func testKeyIsOpaqueToInterpolation() {
         let key = key()

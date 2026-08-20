@@ -22,8 +22,11 @@ public protocol ReviewsProvider {
 /// step in Settings. Replying requires an Admin key in practice; see `docs/REVIEWS_API.md`.
 public protocol ReviewsWriter {
     /// `POST /v1/customerReviewResponses`. Apple's endpoint is create-**or-update** with no
-    /// distinction, so this silently replaces an existing reply. Callers must have confirmed.
-    func publishResponse(reviewID: String, body: String,
+    /// distinction, so this silently replaces an existing reply.
+    ///
+    /// Takes a `ConfirmedReply` rather than a review ID and a string, so it cannot be called with
+    /// text the user hasn't confirmed — that value can only come from `ReplyDraft.confirm()`.
+    func publishResponse(_ reply: ConfirmedReply,
                          completion: @escaping (Result<ReviewResponse, Error>) -> Void)
 
     /// `DELETE /v1/customerReviewResponses/{id}`.
@@ -46,6 +49,11 @@ public enum ReviewsError: LocalizedError, Equatable {
     case http(Int, detail: String?)
     case network
     case badResponse
+    /// A write refused on role grounds. Distinct from `.forbidden` because the fix is different and
+    /// much bigger: reading needs App Manager, replying needs Admin.
+    case notAllowedToReply(detail: String?)
+    /// Apple accepted the request and refused the content — 409 or 422.
+    case rejected(detail: String?)
 
     public var errorDescription: String? {
         switch self {
@@ -69,6 +77,15 @@ public enum ReviewsError: LocalizedError, Equatable {
             return "Can't reach api.appstoreconnect.apple.com."
         case .badResponse:
             return "Couldn't read the reviews App Store Connect returned."
+        case .notAllowedToReply(let detail):
+            // Apple's own message doesn't name the role, and the obvious guess — App Manager, which
+            // is what reading needs — is the wrong one. See docs/REVIEWS_API.md.
+            let base = "That key isn't allowed to reply. Replying needs an Admin key; the App "
+                + "Manager role can read reviews but not answer them."
+            guard let detail else { return base }
+            return "\(base) App Store Connect said: \(detail)"
+        case .rejected(let detail):
+            return detail ?? "App Store Connect wouldn't accept that reply."
         }
     }
 }

@@ -12,12 +12,19 @@ public struct MoneyText: Equatable, Sendable {
     /// Lines the caller should show underneath, accounting for anything the headline leaves out.
     public let notes: [String]
     /// The converted total, for ranking apps against each other. Never displayed.
+    ///
+    /// **Only meaningful when `isComparable`.** Without a usable rate table this is an amount in
+    /// whichever currency the row happened to lead with, and comparing two of those ranks by
+    /// exchange rate rather than by money.
     public let sortKey: Decimal
+    /// Whether `sortKey` may be compared with another `MoneyText`'s.
+    public let isComparable: Bool
 
-    public init(headline: String, notes: [String], sortKey: Decimal) {
+    public init(headline: String, notes: [String], sortKey: Decimal, isComparable: Bool = true) {
         self.headline = headline
         self.notes = notes
         self.sortKey = sortKey
+        self.isComparable = isComparable
     }
 }
 
@@ -46,20 +53,41 @@ public enum Money {
         let format = compact ? Fmt.moneyCompact : Fmt.money
         let nonZero = proceeds.filter { $0.value != 0 }
 
-        guard let rates else {
-            let ranked = nonZero.sorted { abs($0.value) > abs($1.value) }
+        func unconvertedText(_ bag: [String: Decimal]) -> MoneyText {
+            // Prefer the display currency when it's actually in the bag: picking the largest
+            // nominal amount instead means ¥15,000 (about $100) outranks $900, and the headline
+            // shows the currency with the biggest number rather than the most money.
+            let ranked = bag.sorted { left, right in
+                if left.key == displayCurrency { return true }
+                if right.key == displayCurrency { return false }
+                return abs(left.value) > abs(right.value)
+            }
             guard let largest = ranked.first else {
-                return MoneyText(headline: format(0, displayCurrency), notes: [], sortKey: 0)
+                return MoneyText(headline: format(0, displayCurrency), notes: [], sortKey: 0,
+                                 isComparable: false)
             }
             let others = ranked.count - 1
             return MoneyText(
                 headline: format(largest.value, largest.key),
                 notes: others > 0
                     ? ["+ \(others) other \(others == 1 ? "currency" : "currencies")"] : [],
-                sortKey: largest.value)
+                // Not comparable across currencies, and callers must not rank on it — see
+                // `isComparable`.
+                sortKey: largest.value,
+                isComparable: false)
         }
 
+        guard let rates else { return unconvertedText(nonZero) }
+
         let (converted, unconverted) = rates.convert(nonZero, to: displayCurrency)
+
+        // Rates exist but none of them apply — Apple pays in plenty of currencies the ECB doesn't
+        // publish (TWD, AED, VND, NGN…). Falling through here would print "≈ $0.00" over real
+        // revenue, which is the same lie the no-rates path was written to avoid, arriving through a
+        // different door.
+        if converted == 0, !unconverted.isEmpty {
+            return unconvertedText(unconverted)
+        }
         let notes = unconverted.sorted { $0.key < $1.key }.map {
             "+ \(Fmt.money($0.value, currency: $0.key)) — no ECB rate"
         }

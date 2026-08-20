@@ -6,7 +6,7 @@ import SwiftUI
 /// Everything `NSPopover` would have done for free, done deliberately: anchoring under the status
 /// item, dismissal on an outside click or Esc, and the size animation between compact and expanded
 /// routes. See `PanelWindow` for why that trade is the right one.
-final class PanelController {
+final class PanelController: NSObject {
     private var window: PanelWindow?
     private var hostingView: NSHostingView<PanelRootView>?
     private var globalMonitor: Any?
@@ -19,6 +19,14 @@ final class PanelController {
     /// the menu bar and back on every navigation.
     private var topEdge: CGFloat = 0
     private var anchorMidX: CGFloat = 0
+    /// When the panel was last closed by a click.
+    ///
+    /// The status item's own click arrives twice: the local monitor sees mouse-**down** and closes
+    /// the panel, then the button's action fires on mouse-**up** and finds it already closed, so it
+    /// reopens. The panel flickered and stayed open, and only Esc or a click elsewhere would
+    /// dismiss it. `toggle` ignores a reopen that lands within one click of a close.
+    private var lastClosedAt: Date?
+    private static let reopenSuppression: TimeInterval = 0.25
 
     private let model: PanelModel
 
@@ -29,6 +37,7 @@ final class PanelController {
 
     init(model: PanelModel) {
         self.model = model
+        super.init()
         model.onRouteChange = { [weak self] route in self?.resize(to: route.size) }
     }
 
@@ -37,7 +46,14 @@ final class PanelController {
     // MARK: - Opening and closing
 
     func toggle(relativeTo button: NSStatusBarButton) {
-        if isOpen { close() } else { open(relativeTo: button) }
+        if isOpen {
+            close()
+            return
+        }
+        if let lastClosedAt, Date().timeIntervalSince(lastClosedAt) < Self.reopenSuppression {
+            return
+        }
+        open(relativeTo: button)
     }
 
     func open(relativeTo button: NSStatusBarButton) {
@@ -59,14 +75,15 @@ final class PanelController {
     func close() {
         stopMonitoring()
         window?.orderOut(nil)
+        lastClosedAt = Date()
     }
 
     /// Esc. Goes back before it closes.
     ///
-    /// Somebody two levels in who wants to leave an app's detail shouldn't lose the panel as well —
-    /// and reopening it would land them back on Overview anyway, so closing outright throws away
-    /// the only step they actually wanted.
-    private func escape() {
+    /// Somebody two levels in who wants to leave an app's detail shouldn't lose the panel as well.
+    /// The route survives a close, so dismissing outright would reopen on the same screen they were
+    /// trying to leave.
+    func escape() {
         if model.route == .overview {
             close()
         } else {
@@ -211,21 +228,34 @@ final class PanelController {
             self?.close()
         }
 
-        // Clicks inside Vantage's own windows — Settings, say — plus Esc as a backstop for when
-        // the panel isn't key and so never sees `cancelOperation`.
+        // Clicks inside Vantage's own windows — Settings, say.
+        //
+        // Esc is deliberately **not** handled here. A local monitor runs before AppKit dispatches
+        // to any window, so intercepting key code 53 meant `PanelWindow.cancelOperation` never ran
+        // and a text field mid-edit never got first refusal — Esc while writing a reply navigated
+        // away instead of ending the edit. It also fired while Settings was focused, because a
+        // local monitor is app-wide rather than panel-scoped. The responder chain does this
+        // correctly on its own; see `PanelWindow.cancelOperation`.
         localMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .keyDown]
+            matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in
             guard let self, let panel = self.window else { return event }
-            if event.type == .keyDown {
-                // 53 is Esc. Compared by keyCode rather than by characters so it works on every
-                // keyboard layout.
-                if event.keyCode == 53 { self.escape(); return nil }
-                return event
-            }
             if event.window !== panel { self.close() }
             return event
         }
+
+        // APPKIT: a display change moves the status item without moving the panel, which is left
+        // anchored to a screen that may no longer exist.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(screenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    }
+
+    @objc private func screenParametersChanged() {
+        // Reanchoring would need the status item's button, which this type deliberately doesn't
+        // hold. Closing is both simpler and right: the panel is a glance surface, and one that has
+        // jumped to a different display is more confusing than one that isn't there.
+        close()
     }
 
     private func stopMonitoring() {
@@ -233,6 +263,8 @@ final class PanelController {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         globalMonitor = nil
         localMonitor = nil
+        NotificationCenter.default.removeObserver(
+            self, name: NSApplication.didChangeScreenParametersNotification, object: nil)
     }
 
     deinit { stopMonitoring() }

@@ -55,8 +55,10 @@ public struct OverviewModel: Equatable {
         public let money: MoneyText
         public let units: Decimal
         public let unitsLabel: String
-        /// `nil` when there's no prior week to compare against.
+        /// `nil` when there's no prior window to compare against.
         public let comparison: String?
+        /// Set when the range isn't fully cached, so a low total isn't read as a quiet week.
+        public let coverage: String?
         /// Set when Apple published no report and the day was recorded as zero, which is a guess
         /// rather than an observation and has to say so.
         public let assumedZeroNote: String?
@@ -124,15 +126,16 @@ public struct OverviewModel: Equatable {
 
         // MARK: Headline
 
-        let window = Array(days.prefix(range.days))
-        let units = Metric.units(in: window, metrics: metrics)
-        let total = money(sum(window))
-
-        // The intended span, not the cached one: "Last 7 days" means seven days ending at the
-        // newest report, whether or not all seven are on disk. Naming only the cached ones would
-        // quietly redefine the range every time a fetch failed.
+        // **Selected by date, not by position.** `days.prefix(range.days)` looks equivalent and is
+        // not: the cache can have holes — one date that persistently 500s, one corrupt file — and
+        // `Backfill` deliberately carries on past them. With a hole inside the window, taking the
+        // first seven *entries* reaches back past the range and totals days the label doesn't
+        // cover. That produced $5,020 under a heading reading "Aug 13 – Aug 19".
         let end = latest.date
         let start = end.adding(days: -(range.days - 1))
+        let window = days.filter { $0.date >= start && $0.date <= end }
+        let units = Metric.units(in: window, metrics: metrics)
+        let total = money(sum(window))
 
         let headline = Headline(
             title: range.label,
@@ -140,7 +143,10 @@ public struct OverviewModel: Equatable {
             money: total,
             units: units,
             unitsLabel: Fmt.downloadsWithArrow(units),
-            comparison: comparison(range: range, days: days, units: units, metrics: metrics),
+            comparison: comparison(range: range, days: days, end: end, units: units,
+                                   metrics: metrics),
+            coverage: window.count < range.days
+                ? "\(window.count) of \(range.days) days cached" : nil,
             // Only meaningful for a single day. Across a week, one guessed day among seven doesn't
             // make the total a guess, and saying so would overstate it.
             assumedZeroNote: range == .yesterday && latest.origin == .assumedZero
@@ -149,18 +155,23 @@ public struct OverviewModel: Equatable {
         // MARK: Apps
 
         var apps: [AppRow] = []
-        for app in aggregate(window) {
-            let appUnits = Metric.units(in: app, metrics: metrics)
+        for app in aggregate(window, metrics: metrics) {
             apps.append(AppRow(appleID: app.appleID, title: app.title,
-                               money: money(app.proceeds), units: appUnits,
-                               unitsLabel: Fmt.downloadsWithArrow(appUnits)))
+                               money: money(app.proceeds), units: app.units,
+                               unitsLabel: Fmt.downloadsWithArrow(app.units)))
         }
-        // Ties broken by title so the order is stable across renders rather than inheriting
-        // whatever order the parser happened to produce.
+        // Ranked by money only when the figures are actually comparable. Without a usable rate
+        // table each row's `sortKey` is an amount in whichever currency it led with, so sorting on
+        // it ranks by exchange rate — ¥15,000 (about $100) above $900. Units are cross-currency by
+        // construction, so they're the honest fallback.
+        //
+        // Ties broken by title either way, so the order is stable across renders rather than
+        // inheriting whatever order the parser happened to produce.
+        let comparable = apps.allSatisfy(\.money.isComparable)
         apps.sort { left, right in
-            left.money.sortKey == right.money.sortKey
-                ? left.title < right.title
-                : left.money.sortKey > right.money.sortKey
+            let leftKey = comparable ? left.money.sortKey : left.units
+            let rightKey = comparable ? right.money.sortKey : right.units
+            return leftKey == rightKey ? left.title < right.title : leftKey > rightKey
         }
 
         // MARK: Windows
@@ -168,7 +179,8 @@ public struct OverviewModel: Equatable {
         // The ranges the headline *isn't* showing. Repeating the selected one beside itself would
         // spend the card's most valuable corner saying the same number twice.
         let windows = OverviewRange.allCases.filter { $0 != range }.compactMap { other -> WindowTotal? in
-            let otherWindow = Array(days.prefix(other.days))
+            let otherStart = end.adding(days: -(other.days - 1))
+            let otherWindow = days.filter { $0.date >= otherStart && $0.date <= end }
             guard !otherWindow.isEmpty else { return nil }
             let otherUnits = Metric.units(in: otherWindow, metrics: metrics)
             return WindowTotal(label: other.label, money: money(sum(otherWindow)),
@@ -223,15 +235,25 @@ public struct OverviewModel: Equatable {
         return totals
     }
 
-    /// One `AppSales` per app, totalled across the window.
+    /// One app's totals across the window.
+    struct Aggregated {
+        let appleID: String
+        let title: String
+        let proceeds: [String: Decimal]
+        let units: Decimal
+    }
+
+    /// Totals each app across the window.
     ///
-    /// Product-type tallies are summed rather than the `downloads` field, so the rows answer for
-    /// whichever metrics are switched on — a breakdown that doesn't sum to its own total is worse
-    /// than no breakdown.
-    private static func aggregate(_ days: [DaySales]) -> [AppSales] {
+    /// **Units are resolved per day and then summed**, not merged into one product-type dictionary
+    /// and resolved once. `Metric.units` falls back to the legacy `downloads` field when a day
+    /// carries no per-product-type tally, and that is a per-*day* decision — merging first means one
+    /// modern day in the window makes the merged dictionary non-empty, and every legacy day's units
+    /// silently vanish from the row while still counting in the headline above it. A breakdown that
+    /// doesn't sum to its own total is worse than no breakdown.
+    private static func aggregate(_ days: [DaySales], metrics: Set<Metric>) -> [Aggregated] {
         var proceeds: [String: [String: Decimal]] = [:]
-        var units: [String: [String: Decimal]] = [:]
-        var downloads: [String: Decimal] = [:]
+        var units: [String: Decimal] = [:]
         var titles: [String: String] = [:]
         var order: [String] = []
 
@@ -247,39 +269,45 @@ public struct OverviewModel: Equatable {
                 for (currency, amount) in app.proceeds {
                     proceeds[app.appleID, default: [:]][currency, default: 0] += amount
                 }
-                for (type, count) in app.unitsByProductType {
-                    units[app.appleID, default: [:]][type, default: 0] += count
-                }
-                downloads[app.appleID, default: 0] += app.downloads
+                units[app.appleID, default: 0] += Metric.units(in: app, metrics: metrics)
             }
         }
 
         return order.map { id in
-            AppSales(appleID: id, title: titles[id] ?? id, downloads: downloads[id] ?? 0,
-                     proceeds: proceeds[id] ?? [:], unitsByProductType: units[id] ?? [:])
+            Aggregated(appleID: id, title: titles[id] ?? id,
+                       proceeds: proceeds[id] ?? [:], units: units[id] ?? 0)
         }
     }
 
     /// What the figure is measured against.
     ///
-    /// A single day is compared to the **average** of the seven before it, because one day against
-    /// one day is mostly weekday-versus-weekend noise. A week or a month is compared to the
-    /// immediately preceding window of the same length, where like-for-like already holds.
-    private static func comparison(range: OverviewRange, days: [DaySales],
+    /// **Both sides are per-day averages over the days actually cached**, never raw totals. Totals
+    /// compare two windows' *coverage* as much as their content: eight flat days used to read as
+    /// "▲ 600%" because seven days of 20 were compared against the single earlier day that happened
+    /// to be on disk. Averaging makes a partial window scale correctly, which is what the
+    /// single-day branch always did and the others didn't.
+    ///
+    /// A single day is still measured against the seven before it rather than the one before it —
+    /// day against day is mostly weekday-versus-weekend noise.
+    private static func comparison(range: OverviewRange, days: [DaySales], end: ReportDate,
                                    units: Decimal, metrics: Set<Metric>) -> String? {
-        switch range {
-        case .yesterday:
-            // Excluding the day itself — comparing a day to an average it's part of flattens
-            // exactly the spike worth noticing.
-            let previous = Array(days.dropFirst().prefix(7))
-            guard !previous.isEmpty else { return nil }
-            let average = Metric.units(in: previous, metrics: metrics) / Decimal(previous.count)
-            return "vs 7-day average: \(Fmt.change(from: average, to: units))"
-        case .week, .month:
-            let previous = Array(days.dropFirst(range.days).prefix(range.days))
-            guard !previous.isEmpty else { return nil }
-            let total = Metric.units(in: previous, metrics: metrics)
-            return "vs previous \(range.days) days: \(Fmt.change(from: total, to: units))"
-        }
+        let length = range == .yesterday ? 7 : range.days
+        // The window immediately before this one, by date.
+        let previousEnd = end.adding(days: -range.days)
+        let previousStart = previousEnd.adding(days: -(length - 1))
+        let previous = days.filter { $0.date >= previousStart && $0.date <= previousEnd }
+        guard !previous.isEmpty else { return nil }
+
+        let baseline = Metric.units(in: previous, metrics: metrics) / Decimal(previous.count)
+
+        // The current side is averaged the same way, so both are per-day figures.
+        let start = end.adding(days: -(range.days - 1))
+        let current = days.filter { $0.date >= start && $0.date <= end }
+        guard !current.isEmpty else { return nil }
+        let value = units / Decimal(current.count)
+
+        let label = range == .yesterday ? "7-day average" : "previous \(range.days) days"
+        // Named, because this line sits under a money figure and measures units.
+        return "Downloads vs \(label): \(Fmt.change(from: baseline, to: value))"
     }
 }

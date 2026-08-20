@@ -57,6 +57,74 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Fmt.downloadsWithArrow(Decimal(89)), "89↓")
     }
 
+    // MARK: - Pacific rendering, tested against another zone rather than by substring
+
+    /// The old tests asserted `contains("2")` and `contains("2026")`, which a formatter set to
+    /// UTC+14 — a day ahead — also satisfies. This compares against reference formatters instead, so
+    /// it fails for the actual mistake: rendering a Pacific midnight in some other zone.
+    private func reference(_ zone: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        formatter.timeZone = TimeZone(identifier: zone)!
+        return formatter
+    }
+
+    func testReportDateIsRenderedInPacificAndNotSomewhereElse() {
+        let date = ReportDate(year: 2026, month: 8, day: 1)
+        let rendered = Fmt.reportDate(date)
+
+        XCTAssertEqual(rendered, reference("America/Los_Angeles").string(from: date.startOfDay))
+        // Honolulu is two hours behind Pacific, so a Pacific midnight lands on the *previous* day
+        // there — which is exactly what everyone west of California would have seen.
+        XCTAssertNotEqual(rendered, reference("Pacific/Honolulu").string(from: date.startOfDay),
+                          "A Pacific midnight rendered in another zone names the wrong day")
+    }
+
+    func testSpanEndpointsAreRenderedInPacificToo() {
+        let start = ReportDate(year: 2026, month: 8, day: 1)
+        let end = ReportDate(year: 2026, month: 8, day: 19)
+        let span = Fmt.span(from: start, to: end)
+
+        // Honolulu would render the start as 31 July.
+        XCTAssertFalse(span.contains("31"), span)
+        XCTAssertFalse(span.contains("18"), span)
+    }
+
+    // MARK: - Change, at the edges
+
+    func testChangeFromNothingToSomethingIsNew() {
+        XCTAssertEqual(Fmt.change(from: 0, to: 10), "new")
+    }
+
+    /// A refund-only week after a week of nothing is not growth.
+    func testChangeFromNothingToARefundIsNotNew() {
+        XCTAssertNotEqual(Fmt.change(from: 0, to: -5), "new")
+    }
+
+    func testChangeFromNothingToNothingIsADash() {
+        XCTAssertEqual(Fmt.change(from: 0, to: 0), "—")
+    }
+
+    /// A negative baseline — a week that refunded more than it sold — must still produce a sane
+    /// direction rather than an inverted one.
+    func testChangeAgainstANegativeBaselineReadsAsARise() {
+        // From -10 to 10 is an improvement, and must not print as a fall.
+        XCTAssertTrue(Fmt.change(from: -10, to: 10).contains("▲"),
+                      Fmt.change(from: -10, to: 10))
+    }
+
+    func testChangeRoundsRatherThanTruncating() {
+        // 100 -> 126 is 26%.
+        XCTAssertEqual(Fmt.change(from: 100, to: 126), "▲ 26%")
+        XCTAssertEqual(Fmt.change(from: 100, to: 74), "▼ 26%")
+    }
+
+    func testAnUnchangedFigureSaysSoRatherThanShowingZeroPercent() {
+        XCTAssertEqual(Fmt.change(from: 100, to: 100), "— level")
+    }
+
     // MARK: - Spans
 
     func testASpanOfOneDayIsJustThatDay() {

@@ -51,6 +51,9 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/Money.swift` | Per-currency proceeds → one printable figure, honestly |
 | `Sources/VantageCore/OverviewModel.swift` | Everything the Overview section shows, per range |
 | `Sources/VantageCore/Trend.swift` | Chart series: gaps, normalization, negatives |
+| `Sources/VantageCore/AppDetailModel.swift` | One app's slice, narrowed then handed to `OverviewModel` |
+| `Sources/VantageCore/ReplyDraft.swift` | Where confirm-before-send is enforced, as a state machine |
+| `Sources/VantageCore/ASCReviewsWriter.swift` | The only type that can publish a reply |
 | `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
 | `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on every host |
 | `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → panel, rates, poll timer, wake |
@@ -60,6 +63,8 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/Vantage/Panel/PanelModel.swift` | What the panel renders; the views read only this |
 | `Sources/Vantage/Panel/OverviewView.swift` | The Overview section |
 | `Sources/Vantage/Panel/TrendChart.swift` | The chart, drawn with `Path` |
+| `Sources/Vantage/Panel/ReviewsView.swift` | Reviews, portfolio-wide or per app |
+| `Sources/Vantage/Panel/ReplyComposer.swift` | The composer and the confirmation sheet |
 | `Sources/Vantage/SettingsWindow.swift` | Credentials and preferences, programmatic AppKit |
 | `Sources/Vantage/MainMenu.swift` | The Edit menu — without it ⌘V doesn't work anywhere |
 | `Sources/Vantage/Notifier.swift` | The morning notification |
@@ -86,9 +91,15 @@ eventually) one new file.
    `DaySales.skippedRows`. Unknown product types count toward proceeds, never toward downloads.
 5. **Four network destinations**, enforced by `NoRedirects` rather than merely documented:
    App Store Connect, the ECB, and — since v0.2, for app icons only — `itunes.apple.com` and
-   `*.mzstatic.com`. The icon lookup is the one place a response body chooses the next URL, so that
-   URL must be `https` before it's fetched. Adding a fifth means changing `SECURITY.md`, which
-   states all four and what each carries.
+   `*.mzstatic.com`. Adding a fifth means changing `SECURITY.md`, which states all four and what
+   each carries.
+
+   **Two places take a URL from a response body and then fetch it**: the icon lookup's
+   `artworkUrl*`, and the reviews API's `links.next`. Both are checked for `https` **and** an
+   expected host before being requested — redirect refusal does nothing about a URL the code elects
+   to fetch, so without those checks "four destinations" would be a description of current behaviour
+   rather than a guarantee. `links.next` is the stricter of the two: it carries a bearer token, so
+   it's an exact host match.
 6. **`build.sh` signs ad-hoc only.** It must never handle a Developer ID or notarization
    credentials. Releasing is a manual maintainer step — see `docs/RELEASING.md`.
 
@@ -98,10 +109,16 @@ Vantage holds a **sales key** (required, Sales and Reports role) and an optional
 (App Manager). They are separate Keychain items, separate types, and each client is constructed with
 its own credentials closure — so neither can be used for the other's work by accident.
 
-`docs/REVIEWS_API.md` is the verified reference and records where **two of Apple's own pages
-contradict each other** about who may reply to a review. The short version: replying needs Admin in
-practice, App Manager 403s, and Customer Support can't be assigned to a key at all. **Read it before
-touching `ReviewDecoder` or `ASCReviewsClient`.**
+`docs/REVIEWS_API.md` is the verified reference. The short version: **App Manager can read reviews
+and cannot answer them** — Apple's role matrix, its help pages and the `UserRole` enum all agree on
+that. Replying is Account Holder, Admin or Customer Support, and for an API key that means Admin in
+practice. **Read it before touching `ReviewDecoder` or `ASCReviewsClient`.**
+
+That file also carries a correction worth knowing about: it previously claimed Apple's pages
+*contradicted* each other on this point, and three other documents cited that as a reason to trust
+it. The claim came from a summarised read that conflated the "View ratings and reviews" row with the
+"Respond to customer reviews" row. **Check Apple's raw pages, not a summary of them, before writing
+"Apple's docs disagree" anywhere.**
 
 Reviews are **per app** — there is no portfolio endpoint — so a portfolio view is one request per
 app. That's why they're fetched when the section is opened and never from the poll timer.

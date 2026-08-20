@@ -3,9 +3,16 @@ import Security
 
 /// The values Vantage needs to talk to App Store Connect, held in the macOS Keychain.
 ///
-/// **Two independent keys.** The sales key needs only the Sales and Reports role and is required.
-/// The reviews key is optional, needs a far more powerful role, and is stored as its own separate
-/// items so that adding one never widens what the sales key can do. Nothing reads across the two.
+/// **Two independent keys.** The sales key is required and needs only a reports role. The reviews
+/// key is optional, needs a more powerful role, and is stored as its own separate Keychain items so
+/// that adding one never widens what the sales key can do.
+///
+/// The separation is real in *storage* — two disjoint sets of account names, and `reviewsKey()`
+/// deliberately does not fall back to the sales key — and in *injection*: each client's default
+/// argument reads only its own. It is **not** enforced by the type system: both keys are `ASCKey`,
+/// so a caller that went out of its way could hand one to the other's client. Nothing does, and the
+/// defaults make the right thing the easy thing, but the honest description is "separate storage
+/// and separate wiring", not "impossible to mix".
 ///
 /// Nothing in this file logs, prints, or returns a credential in an error message. Values are read
 /// on demand, handed to one request, and dropped. Keep it that way — see the guardrails in
@@ -30,8 +37,9 @@ public enum KeychainStore {
         case reviewsKeyID
         case reviewsPrivateKey
 
-        /// Which key an item belongs to, so Settings can forget one without touching the other.
-        var isReviews: Bool {
+        /// Which key an item belongs to, so Settings can forget one without touching the other and
+        /// can present the reviews fields as optional rather than missing.
+        public var isReviews: Bool {
             switch self {
             case .reviewsIssuerID, .reviewsKeyID, .reviewsPrivateKey: return true
             case .issuerID, .keyID, .privateKey, .vendorNumber: return false
@@ -148,7 +156,9 @@ public enum KeychainStore {
 
 /// The four values the sales key needs, in memory, for the lifetime of one request batch.
 public struct Credentials {
-    public let key: ASCKey
+    /// Internal rather than public: only `ASCClient`, in this module, has business unwrapping the
+    /// sales key back out of its credentials.
+    let key: ASCKey
     /// Sales reports only. The reviews endpoints take no vendor number, which is one more reason
     /// the two keys don't share a type.
     public let vendorNumber: String

@@ -119,6 +119,92 @@ final class ReviewDecodingTests: XCTestCase {
         XCTAssertNil(ReviewDecoder.page(from: data(last), appleID: "6478")?.next)
     }
 
+    // MARK: - Response routing
+
+    /// The single-response fixture above can't tell relationship-ID routing from "take the first
+    /// one" — mutation testing confirmed `responses.values.first` passed the whole suite. Two of
+    /// each is what makes a reply appearing under the wrong customer's review a test failure.
+    func testEachReplyLandsOnTheReviewItAnswers() {
+        let twoOfEach = """
+        {"data":[
+          {"type":"customerReviews","id":"review-a","attributes":
+            {"rating":5,"createdDate":"2026-08-18T09:00:00Z"},
+           "relationships":{"response":{"data":
+            {"type":"customerReviewResponses","id":"response-a"}}}},
+          {"type":"customerReviews","id":"review-b","attributes":
+            {"rating":1,"createdDate":"2026-08-17T09:00:00Z"},
+           "relationships":{"response":{"data":
+            {"type":"customerReviewResponses","id":"response-b"}}}}
+        ],
+        "included":[
+          {"type":"customerReviewResponses","id":"response-b","attributes":
+            {"responseBody":"Reply to B","state":"PUBLISHED",
+             "lastModifiedDate":"2026-08-19T10:00:00Z"}},
+          {"type":"customerReviewResponses","id":"response-a","attributes":
+            {"responseBody":"Reply to A","state":"PUBLISHED",
+             "lastModifiedDate":"2026-08-19T10:00:00Z"}}
+        ]}
+        """
+        let reviews = ReviewDecoder.page(from: data(twoOfEach), appleID: "1")?.reviews
+        XCTAssertEqual(reviews?.count, 2)
+        // `included` is deliberately in the opposite order to `data`.
+        XCTAssertEqual(reviews?.first?.response?.body, "Reply to A")
+        XCTAssertEqual(reviews?.last?.response?.body, "Reply to B")
+    }
+
+    /// One review answered, one not, in the same page.
+    func testAnUnansweredReviewGetsNoReplyEvenWhenOthersHaveOne() {
+        let mixed = """
+        {"data":[
+          {"type":"customerReviews","id":"answered","attributes":
+            {"rating":5,"createdDate":"2026-08-18T09:00:00Z"},
+           "relationships":{"response":{"data":
+            {"type":"customerReviewResponses","id":"r1"}}}},
+          {"type":"customerReviews","id":"unanswered","attributes":
+            {"rating":3,"createdDate":"2026-08-17T09:00:00Z"}}
+        ],
+        "included":[
+          {"type":"customerReviewResponses","id":"r1","attributes":
+            {"responseBody":"Thanks","state":"PUBLISHED",
+             "lastModifiedDate":"2026-08-19T10:00:00Z"}}
+        ]}
+        """
+        let reviews = ReviewDecoder.page(from: data(mixed), appleID: "1")?.reviews
+        XCTAssertNotNil(reviews?.first?.response)
+        XCTAssertNil(reviews?.last?.response)
+    }
+
+    /// A row of the wrong resource type means the payload isn't what we think it is.
+    func testARowOfTheWrongTypeIsSkipped() {
+        let wrong = """
+        {"data":[{"type":"apps","id":"x","attributes":
+          {"rating":5,"createdDate":"2026-08-18T09:00:00Z"}}]}
+        """
+        let page = ReviewDecoder.page(from: data(wrong), appleID: "1")
+        XCTAssertEqual(page?.reviews.count, 0)
+        XCTAssertEqual(page?.skipped, 1)
+    }
+
+    /// An `included` entry that isn't a response must not be adopted as one.
+    func testIncludedEntriesOfOtherTypesAreIgnored() {
+        let noisy = """
+        {"data":[{"type":"customerReviews","id":"a","attributes":
+          {"rating":5,"createdDate":"2026-08-18T09:00:00Z"},
+          "relationships":{"response":{"data":
+            {"type":"customerReviewResponses","id":"t1"}}}}],
+         "included":[{"type":"territories","id":"t1","attributes":{"currency":"GBP"}}]}
+        """
+        XCTAssertNil(ReviewDecoder.page(from: data(noisy), appleID: "1")?.reviews.first?.response)
+    }
+
+    /// Exact host match, not a suffix — `api.appstoreconnect.apple.com.evil.test` must not pass.
+    func testTheNextLinkHostIsMatchedExactly() {
+        let lookalike = fullPage.replacingOccurrences(
+            of: "https://api.appstoreconnect.apple.com/v1/apps/1/customerReviews?cursor=abc",
+            with: "https://api.appstoreconnect.apple.com.evil.test/v1/apps/1/customerReviews")
+        XCTAssertNil(ReviewDecoder.page(from: data(lookalike), appleID: "1")?.next)
+    }
+
     // MARK: - Degrading
 
     /// Same bargain the TSV parser makes: a malformed row costs one row, not the fetch.
@@ -190,7 +276,36 @@ final class ReviewDecodingTests: XCTestCase {
         XCTAssertEqual(ReviewDecoder.response(from: entry)?.state, .pendingPublish)
     }
 
+    // MARK: - The write path's response
+
+    /// A successful POST returns a single resource under `data`, not the array-plus-`included`
+    /// shape a listing returns. Decoding it wrong would report a published reply as a failure.
+    func testDecodesTheResponseToASuccessfulPost() {
+        let created = """
+        {"data":{"type":"customerReviewResponses","id":"resp-9","attributes":{
+          "responseBody":"Thanks — fixed in 1.2.",
+          "state":"PENDING_PUBLISH",
+          "lastModifiedDate":"2026-08-20T11:30:00.000+0000"}}}
+        """
+        let response = ReviewDecoder.singleResponse(from: data(created))
+        XCTAssertEqual(response?.id, "resp-9")
+        XCTAssertEqual(response?.body, "Thanks — fixed in 1.2.")
+        XCTAssertEqual(response?.state, .pendingPublish)
+    }
+
+    /// Apple returning the wrong resource type means the payload isn't what we think it is.
+    func testRefusesAPostResponseOfTheWrongType() {
+        let wrong = #"{"data":{"type":"customerReviews","id":"x","attributes":{}}}"#
+        XCTAssertNil(ReviewDecoder.singleResponse(from: data(wrong)))
+    }
+
+    func testMalformedPostResponseDecodesToNothing() {
+        XCTAssertNil(ReviewDecoder.singleResponse(from: data("not json")))
+        XCTAssertNil(ReviewDecoder.singleResponse(from: data("{}")))
+    }
+
     // MARK: - Request building
+
 
     func testFirstPageURLAsksForWhatThePanelNeeds() {
         let url = ASCReviewsClient.firstPageURL(appleID: "6478", limit: 50)

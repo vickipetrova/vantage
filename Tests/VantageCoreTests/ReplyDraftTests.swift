@@ -15,7 +15,7 @@ final class ReplyDraftTests: XCTestCase {
 
     /// The whole point of the type.
     func testSendingIsUnreachableWithoutConfirming() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("Thanks for the report — fixed in 1.2.")
 
         XCTAssertNil(draft.confirm(), "Confirming straight from editing must not produce text")
@@ -23,40 +23,40 @@ final class ReplyDraftTests: XCTestCase {
     }
 
     func testTheOnlyRouteToSendingIsRequestThenConfirm() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("Thanks!")
 
         XCTAssertTrue(draft.requestConfirmation())
         XCTAssertEqual(draft.stage, .awaitingConfirmation)
 
-        XCTAssertEqual(draft.confirm(), "Thanks!")
+        XCTAssertEqual(draft.confirm()?.body, "Thanks!")
         XCTAssertEqual(draft.stage, .sending)
     }
 
     /// Confirming twice must not produce a second send. Double-clicking Publish is not two replies.
     func testConfirmingTwiceSendsOnce() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("Thanks!")
         draft.requestConfirmation()
 
-        XCTAssertEqual(draft.confirm(), "Thanks!")
+        XCTAssertEqual(draft.confirm()?.body, "Thanks!")
         XCTAssertNil(draft.confirm(), "The second confirm has nothing to send")
     }
 
     /// A draft awaiting confirmation shows exactly what will be published. If the text could change
     /// underneath that, the confirmation would be about something else.
     func testTextCannotChangeWhileAwaitingConfirmation() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("Original")
         draft.requestConfirmation()
 
         draft.edit("Something else entirely")
         XCTAssertEqual(draft.text, "Original")
-        XCTAssertEqual(draft.confirm(), "Original")
+        XCTAssertEqual(draft.confirm()?.body, "Original")
     }
 
     func testTextCannotChangeWhileSending() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("Original")
         draft.requestConfirmation()
         draft.confirm()
@@ -68,7 +68,7 @@ final class ReplyDraftTests: XCTestCase {
     // MARK: - Backing out
 
     func testCancellingConfirmationKeepsTheText() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("A considered reply")
         draft.requestConfirmation()
         draft.cancelConfirmation()
@@ -78,7 +78,7 @@ final class ReplyDraftTests: XCTestCase {
     }
 
     func testCancellingOutsideConfirmationDoesNothing() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("x")
         draft.cancelConfirmation()
         XCTAssertEqual(draft.stage, .editing)
@@ -89,7 +89,7 @@ final class ReplyDraftTests: XCTestCase {
     /// The confirmation is never shown for text Apple would reject — the user shouldn't have to
     /// read a summary of something that can't be sent.
     func testEmptyTextCannotReachConfirmation() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         XCTAssertFalse(draft.requestConfirmation())
         XCTAssertEqual(draft.stage, .editing)
 
@@ -98,7 +98,7 @@ final class ReplyDraftTests: XCTestCase {
     }
 
     func testOverlongTextCannotReachConfirmation() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit(String(repeating: "a", count: ReplyValidation.maxLength + 1))
         XCTAssertFalse(draft.requestConfirmation())
     }
@@ -106,7 +106,7 @@ final class ReplyDraftTests: XCTestCase {
     // MARK: - Outcomes
 
     func testSuccessRecordsWhetherApplePublishedItYet() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("Thanks!")
         draft.requestConfirmation()
         draft.confirm()
@@ -115,7 +115,7 @@ final class ReplyDraftTests: XCTestCase {
     }
 
     func testAFailureCanBeEditedAndRetried() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.edit("Thanks!")
         draft.requestConfirmation()
         draft.confirm()
@@ -129,11 +129,79 @@ final class ReplyDraftTests: XCTestCase {
 
     /// An outcome may only be recorded for something actually in flight.
     func testOutcomesAreIgnoredOutsideSending() {
-        var draft = ReplyDraft()
+        var draft = ReplyDraft(reviewID: "review-1")
         draft.succeeded(state: .published)
         XCTAssertEqual(draft.stage, .editing)
         draft.failed("nope")
         XCTAssertEqual(draft.stage, .editing)
+    }
+
+    // MARK: - Guards the mutation testing found unprotected
+
+    /// Cancelling from `.sending` would drag an in-flight reply back to editable, which is the one
+    /// path that turns confirm-before-send into publish-twice.
+    func testCancellingCannotPullBackAnInFlightReply() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Thanks!")
+        draft.requestConfirmation()
+        draft.confirm()
+
+        draft.cancelConfirmation()
+        XCTAssertEqual(draft.stage, .sending)
+        XCTAssertNil(draft.confirm(), "and it must still be impossible to send a second time")
+    }
+
+    /// Retrying is for failures. From `.sent` it would offer to publish again over a reply that
+    /// already went out.
+    func testRetryOnlyAppliesToAFailure() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Thanks!")
+        draft.requestConfirmation()
+        draft.confirm()
+        draft.succeeded(state: .published)
+
+        draft.retry()
+        XCTAssertEqual(draft.stage, .sent(state: .published))
+    }
+
+    func testRetryDoesNothingWhileEditingOrSending() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.retry()
+        XCTAssertEqual(draft.stage, .editing)
+
+        draft.edit("Thanks!")
+        draft.requestConfirmation()
+        draft.confirm()
+        draft.retry()
+        XCTAssertEqual(draft.stage, .sending)
+    }
+
+    /// `normalize` is tested on its own; that `confirm()` actually applies it was not, so the draft
+    /// would have published whatever whitespace the box contained.
+    func testConfirmPublishesTheNormalizedText() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("  Thanks — fixed in 1.2.\n\n  ")
+        draft.requestConfirmation()
+        XCTAssertEqual(draft.confirm()?.body, "Thanks — fixed in 1.2.")
+    }
+
+    /// A confirmation is bound to one review, so it can't be handed to a call that publishes it
+    /// against another.
+    func testTheConfirmationCarriesTheReviewItAnswers() {
+        var draft = ReplyDraft(reviewID: "review-99")
+        draft.edit("Thanks!")
+        draft.requestConfirmation()
+        XCTAssertEqual(draft.confirm()?.reviewID, "review-99")
+    }
+
+    func testTextSurvivesARoundTripThroughTheConfirmation() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("A considered reply")
+        draft.requestConfirmation()
+        draft.cancelConfirmation()
+        draft.edit("A considered reply, revised")
+        XCTAssertTrue(draft.requestConfirmation())
+        XCTAssertEqual(draft.confirm()?.body, "A considered reply, revised")
     }
 
     // MARK: - Replacing an existing reply
@@ -141,14 +209,14 @@ final class ReplyDraftTests: XCTestCase {
     /// Apple's POST is create-or-update with no distinction, so overwriting is silent at the API
     /// level. The draft has to know, so the confirmation can say "replace" rather than "publish".
     func testADraftForAnAnsweredReviewStartsFromTheExistingReply() {
-        let draft = ReplyDraft(existing: published("Our original reply."))
+        let draft = ReplyDraft(reviewID: "review-1", existing: published("Our original reply."))
         XCTAssertTrue(draft.isReplacement)
         XCTAssertEqual(draft.text, "Our original reply.",
                        "Editing a reply starts from it, not from a blank box")
     }
 
     func testADraftForAnUnansweredReviewIsNotAReplacement() {
-        let draft = ReplyDraft()
+        let draft = ReplyDraft(reviewID: "review-1")
         XCTAssertFalse(draft.isReplacement)
         XCTAssertEqual(draft.text, "")
     }
@@ -191,6 +259,16 @@ final class ReplyValidationTests: XCTestCase {
     func testLengthIsMeasuredAfterTrimming() {
         let padded = "  " + String(repeating: "a", count: ReplyValidation.maxLength) + "  "
         XCTAssertTrue(ReplyValidation.check(padded).isValid)
+    }
+
+    /// Pinned as a literal, deliberately.
+    ///
+    /// Every other assertion here is written against `ReplyValidation.maxLength` symbolically, so
+    /// changing the constant kept the whole suite green — and this number is stated as fact in both
+    /// `SECURITY.md` and `docs/REVIEWS_API.md`. It is community-tested rather than published by
+    /// Apple, which is all the more reason for one test to hold it still.
+    func testTheLimitIsTheAppStoreFigureTheDocsQuote() {
+        XCTAssertEqual(ReplyValidation.maxLength, 5_970)
     }
 
     func testNormalizeTrimsButLeavesTheMiddleAlone() {

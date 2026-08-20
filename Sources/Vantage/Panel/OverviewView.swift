@@ -38,7 +38,11 @@ struct OverviewView: View {
         if !overview.apps.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.tight) {
                 SectionHeader("Apps", trailing: AnyView(MetricsPicker(model: model)))
-                VStack(spacing: 1) {
+                // Lazy, so the `.onAppear` below really does mean "when this row is scrolled to".
+                // A plain VStack instantiates and appears every child immediately, which fired the
+                // whole portfolio's icon lookups the moment the panel opened — the opposite of what
+                // the comment claimed.
+                LazyVStack(spacing: 1) {
                     ForEach(overview.apps) { app in
                         AppRowView(app: app, icon: model.icons[app.appleID]) {
                             model.navigate(to: .appDetail(appleID: app.appleID))
