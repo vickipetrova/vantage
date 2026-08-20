@@ -43,17 +43,37 @@ removes all four from the Keychain.
 
 ## Where it goes
 
-Two hosts. That is the entire network surface of this application.
+Four hosts. That is the entire network surface of this application.
 
 ```
-GET https://api.appstoreconnect.apple.com/v1/salesReports    (your reports)
-GET https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml   (currency rates)
+GET https://api.appstoreconnect.apple.com/v1/salesReports          (your reports)
+GET https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml  (currency rates)
+GET https://itunes.apple.com/lookup?id=…&entity=software           (app icons)
+GET https://*.mzstatic.com/…                                       (the icon image itself)
 ```
 
-Both connections **refuse redirects outright**. Without that, a 302 from either host could send the
+The first two carry the app's whole purpose. The last two exist only to draw an app's icon beside
+its row, and they were added in v0.2 — v0.1 really did talk to two hosts and nothing else.
+
+**Why a third and fourth host for something so small:** the App Store Connect API has no icon. There
+is no artwork field on `/v1/apps/{id}`, and no endpoint that returns one. The public storefront
+lookup is the only source, and it answers on `itunes.apple.com` with a URL pointing at
+`*.mzstatic.com`.
+
+**What those two requests reveal:** the numeric Apple ID of an app you publish, to Apple,
+unauthenticated. No token, no vendor number, no app names, no sales figures, no cookies. It is byte
+for byte the request the App Store website makes when anyone anywhere looks at your app's page, and
+it carries nothing that identifies you as the caller. Icons are cached on disk after the first fetch,
+so it happens once per app rather than once per refresh.
+
+Every connection **refuses redirects outright**. Without that, a 302 from any of them could send the
 next request — and, for App Store Connect, your bearer token with it — somewhere this document
-doesn't mention. Refusing redirects is what makes "two destinations" something the code enforces
+doesn't mention. Refusing redirects is what makes "four destinations" something the code enforces
 rather than a description of how it currently happens to behave.
+
+The icon lookup is the only place where a response body chooses the next URL Vantage fetches, so
+that URL must be `https` before it is requested at all, and a redirect from it fails the icon rather
+than being followed. A missing icon is a blank tile; it is never a reason to follow a stranger.
 
 The App Store Connect request carries a freshly minted ES256 JWT, signed locally with your private
 key. Apple rejects tokens for this endpoint that live longer than 20 minutes; Vantage issues them
@@ -65,13 +85,15 @@ The ECB request carries nothing. No token, no identifier, no app names, no numbe
 request for a public XML file of exchange rates, identical for every user in the world.
 
 There is no telemetry, no analytics, no crash reporting, no update check, and no third-party
-service of any kind. There is no server operated by this project. **Your sales figures are never
+service of any kind — the icon lookup is Apple's own public storefront API, not a service operated
+by anyone else. There is no server operated by this project. **Your sales figures are never
 sent anywhere** — they travel from Apple to your Mac and stop there.
 
 ## What it stores on disk
 
 `~/Library/Application Support/Vantage/` holds one JSON file per day: the parsed totals for that
-date. Daily reports are immutable once published, so a cached day is never re-fetched.
+date. Daily reports are immutable once published, so a cached day is never re-fetched. Alongside it,
+`icons/` holds one image per app — public store artwork, nothing derived from your account.
 
 Those files contain your own sales numbers — app names, unit counts and proceeds. They're readable
 by anything running as your user, exactly like any other app's Application Support folder. They
@@ -90,7 +112,8 @@ The parts worth auditing, in the order they matter:
 | `Sources/VantageCore/KeychainStore.swift` | Every read and write of a credential |
 | `Sources/VantageCore/ASCClient.swift` | JWT construction, the one request, and that the key is used and dropped |
 | `Sources/VantageCore/FX.swift` | The ECB request carries no identifying data |
-| `Sources/VantageCore/NoRedirects.swift` | Nine lines, and the reason "two destinations" is enforceable |
+| `Sources/VantageCore/NoRedirects.swift` | Nine lines, and the reason "four destinations" is enforceable |
+| `Sources/VantageCore/AppIcons.swift` | The two unauthenticated requests, and that they carry no credential |
 
 Two habits in the source worth knowing about, because they're the kind of thing that gets undone by
 accident:
