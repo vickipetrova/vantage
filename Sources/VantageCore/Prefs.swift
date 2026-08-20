@@ -11,6 +11,8 @@ public enum Prefs {
         static let displayCurrency = "displayCurrency"
         static let metrics = "enabledMetrics"
         static let morningNotification = "morningNotification"
+        static let trendSeries = "trendSeries"
+        static let overviewRange = "overviewRange"
     }
 
     /// What the menu bar renders money in. Defaults to the currency of the user's region, which is
@@ -57,6 +59,33 @@ public enum Prefs {
         var current = metrics
         if current.contains(metric) { current.remove(metric) } else { current.insert(metric) }
         metrics = current
+    }
+
+    /// Which single series the Overview chart draws.
+    ///
+    /// Separate from `metrics`, which is a *set* governing what the `↓` figure counts everywhere.
+    /// One line on a chart is a different question from which units are downloads, and conflating
+    /// them meant either an unreadable chart or a crippled toggle.
+    public static var trendSeries: TrendSeries {
+        get {
+            guard let raw = defaults.string(forKey: Key.trendSeries),
+                  let series = TrendSeries(rawValue: raw)
+            else { return .metric(.installs) }
+            return series
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.trendSeries) }
+    }
+
+    /// How much of the cache the Overview summarises. Remembered, because it's a way of working
+    /// rather than a per-session choice — someone who thinks in weeks thinks in weeks tomorrow too.
+    public static var overviewRange: OverviewRange {
+        get {
+            guard let raw = defaults.string(forKey: Key.overviewRange),
+                  let range = OverviewRange(rawValue: raw)
+            else { return .yesterday }
+            return range
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.overviewRange) }
     }
 
     public static var morningNotification: Bool {

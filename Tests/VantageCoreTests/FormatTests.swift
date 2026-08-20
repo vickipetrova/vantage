@@ -57,36 +57,37 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Fmt.downloadsWithArrow(Decimal(89)), "89↓")
     }
 
-    // MARK: - Wrapping
+    // MARK: - Spans
 
-    /// NSMenu never wraps and sizes to its widest item, so an unwrapped error sentence stretches
-    /// the dropdown across the entire screen.
-    func testWrapKeepsEveryLineWithinTheLimit() {
-        let message = "This request requires an in-effect agreement that has not been signed "
-            + "or has expired. Sign it in App Store Connect › Business (Account Holder only)."
-        let lines = Fmt.wrap(message, width: 46)
-        XCTAssertGreaterThan(lines.count, 1)
-        for line in lines { XCTAssertLessThanOrEqual(line.count, 46, line) }
+    func testASpanOfOneDayIsJustThatDay() {
+        let date = ReportDate(year: 2026, month: 8, day: 19)
+        XCTAssertEqual(Fmt.span(from: date, to: date), Fmt.reportDate(date))
     }
 
-    func testWrapLosesNoWords() {
-        let message = "Invalid vendor number specified for this request."
-        XCTAssertEqual(Fmt.wrap(message, width: 12).joined(separator: " "), message)
+    /// "22 Jul – 19 Aug" rather than "22 Jul 2026 – 19 Aug 2026": twice the width for one bit of
+    /// information, in a corner of the card that has none to spare.
+    func testASpanWithinOneYearDropsTheYear() {
+        let span = Fmt.span(from: ReportDate(year: 2026, month: 7, day: 22),
+                            to: ReportDate(year: 2026, month: 8, day: 19))
+        XCTAssertFalse(span.contains("2026"), span)
+        XCTAssertTrue(span.contains("–"), span)
     }
 
-    func testWrapLeavesShortTextAlone() {
-        XCTAssertEqual(Fmt.wrap("Fetching…"), ["Fetching…"])
+    /// A span crossing new year is exactly when the year matters.
+    func testASpanCrossingYearsKeepsBothYears() {
+        let span = Fmt.span(from: ReportDate(year: 2025, month: 12, day: 20),
+                            to: ReportDate(year: 2026, month: 1, day: 5))
+        XCTAssertTrue(span.contains("2025"), span)
+        XCTAssertTrue(span.contains("2026"), span)
     }
 
-    func testWrapDoesntChopALongUnbrokenToken() {
-        // A filesystem path with no spaces: better one over-long row than an unreadable one split
-        // mid-path.
-        let path = "~/Library/Application_Support/Vantage/raw/2026-08-01.tsv"
-        XCTAssertEqual(Fmt.wrap(path, width: 20), [path])
-    }
-
-    func testWrapHandlesEmptyText() {
-        XCTAssertEqual(Fmt.wrap(""), [""])
+    /// Same trap as `reportDate`: these are Pacific midnights, and rendering them in the viewer's
+    /// zone would print the previous day for anyone west of California.
+    func testSpanEndsAreRenderedInPacific() {
+        let span = Fmt.span(from: ReportDate(year: 2026, month: 8, day: 1),
+                            to: ReportDate(year: 2026, month: 8, day: 19))
+        XCTAssertTrue(span.contains("1"), span)
+        XCTAssertTrue(span.contains("19"), span)
     }
 
     // MARK: - Dates
