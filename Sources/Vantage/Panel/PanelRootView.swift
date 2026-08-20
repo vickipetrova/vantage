@@ -27,7 +27,7 @@ struct PanelRootView: View {
             case .overview:
                 OverviewView(model: model)
             case .appDetail(let appleID):
-                PlaceholderView(route: .appDetail(appleID: appleID), model: model)
+                AppDetailView(model: model, appleID: appleID)
             case .reviews:
                 PlaceholderView(route: .reviews, model: model)
             case .analytics:

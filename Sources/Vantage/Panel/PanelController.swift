@@ -61,10 +61,23 @@ final class PanelController {
         window?.orderOut(nil)
     }
 
+    /// Esc. Goes back before it closes.
+    ///
+    /// Somebody two levels in who wants to leave an app's detail shouldn't lose the panel as well —
+    /// and reopening it would land them back on Overview anyway, so closing outright throws away
+    /// the only step they actually wanted.
+    private func escape() {
+        if model.route == .overview {
+            close()
+        } else {
+            model.navigate(to: .overview)
+        }
+    }
+
     private func makeWindow() -> PanelWindow {
         let size = model.route.size
         let panel = PanelWindow(contentRect: NSRect(origin: .zero, size: size))
-        panel.onDismiss = { [weak self] in self?.close() }
+        panel.onDismiss = { [weak self] in self?.escape() }
 
         let hosting = NSHostingView(rootView: PanelRootView(model: model))
         // The SwiftUI content must not paint a background of its own — it sits on top of the
@@ -207,7 +220,7 @@ final class PanelController {
             if event.type == .keyDown {
                 // 53 is Esc. Compared by keyCode rather than by characters so it works on every
                 // keyboard layout.
-                if event.keyCode == 53 { self.close(); return nil }
+                if event.keyCode == 53 { self.escape(); return nil }
                 return event
             }
             if event.window !== panel { self.close() }
