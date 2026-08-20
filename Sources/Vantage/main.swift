@@ -4,7 +4,9 @@ import VantageCore
 /// Wiring: a provider, a cache, exchange rates, and a timer that only fires when Apple might
 /// actually have something new.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let menuController = MenuController()
+    private let statusItemController = StatusItemController()
+    private let panelModel = PanelModel()
+    private lazy var panel = PanelController(model: panelModel)
     private let settingsWindow = SettingsWindow()
     private let store = ReportStore()
     private let fx = FX()
@@ -27,9 +29,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)  // Menu bar only, no dock icon.
         MainMenu.install()  // Without this, ⌘V doesn't work in the Settings fields.
 
-        menuController.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
-        menuController.onSettings = { [weak self] in self?.settingsWindow.show() }
-        menuController.onMetricsChanged = { [weak self] in self?.render() }
+        statusItemController.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
+        statusItemController.onSettings = { [weak self] in self?.settingsWindow.show() }
+        statusItemController.onTogglePanel = { [weak self] button in
+            self?.panel.toggle(relativeTo: button)
+        }
+        // A right-click menu on top of an open panel is two overlapping surfaces saying different
+        // things about the same data.
+        statusItemController.onWillShowMenu = { [weak self] in self?.panel.close() }
+
+        panelModel.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
+        panelModel.onSettings = { [weak self] in self?.settingsWindow.show() }
+        panelModel.onMetricsChanged = { [weak self] in self?.render() }
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
         settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
         settingsWindow.testConnection = { [weak self] completion in
@@ -41,12 +52,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard KeychainStore.hasCredentials else {
             // First launch: nothing to show and nothing to fetch, so open the one window that
             // fixes that rather than sitting there displaying a dash.
-            menuController.showNoCredentials()
+            statusItemController.showNoCredentials()
+            panelModel.showNoCredentials()
             settingsWindow.show()
             return
         }
         render()
         refresh(userInitiated: false)
+
 
         // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
         // window it slept through. Ask again the moment it wakes.
@@ -68,14 +81,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Renders from disk. Instant, offline, and the reason a relaunch or a metric toggle doesn't
     /// wait on the network.
     private func render(error: Error? = nil) {
-        menuController.update(days: store.loadAll(window), rates: rates, error: error)
+        let days = store.loadAll(window)
+        statusItemController.update(days: days, rates: rates, error: error)
+        panelModel.update(days: days, rates: rates, error: error)
     }
 
     // MARK: - Fetching
 
     private func refresh(userInitiated: Bool) {
         guard KeychainStore.hasCredentials else {
-            menuController.showNoCredentials()
+            statusItemController.showNoCredentials()
+            panelModel.showNoCredentials()
             return
         }
         guard !isFetching else { return }  // Refresh Now during a backfill shouldn't double it.
