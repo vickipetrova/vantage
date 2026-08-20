@@ -65,9 +65,13 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     // MARK: - Layout
 
     private func build() {
+        // Height is clamped to the screen and the content scrolls. Fixed at 860 — which is what
+        // the reviews section grew it to — the bottom controls fell off a 1440×900 display with no
+        // way to reach them.
+        let available = (NSScreen.main?.visibleFrame.height ?? 900) - 40
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 860),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: min(860, available)),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered, defer: false)
         window.title = "Vantage Settings"
         window.isReleasedWhenClosed = false
@@ -196,7 +200,10 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             "Requires an Admin key, not the App Manager key above. An Admin key can change "
             + "pricing, submit and remove builds, manage users, and read your financial reports. "
             + "Vantage would use it only to publish review replies, and never without asking you "
-            + "to confirm the exact text first. Leave this off unless you want to reply from here."))
+            + "to confirm the exact text first.\n\n"
+            + "There is one reviews key, so switching this on means putting an Admin key in the "
+            + "field above — and every routine review fetch will then carry that key too, not just "
+            + "the replies. Leave this off unless you want to reply from here."))
 
         // MARK: Display
 
@@ -223,14 +230,35 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         launchCheckbox.action = #selector(launchToggled)
         stack.addArrangedSubview(launchCheckbox)
 
-        let content = NSView()
-        content.addSubview(stack)
+        let document = NSView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: content.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: document.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.documentView = document
+
+        let content = NSView()
+        content.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: content.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            // Matching widths means the content never scrolls sideways — only down.
+            document.widthAnchor.constraint(equalTo: scroll.widthAnchor),
         ])
         window.contentView = content
+        window.setContentSize(NSSize(width: 460, height: min(860, available)))
         self.window = window
     }
 
@@ -277,19 +305,22 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         return row
     }
 
-    /// Repaints all four indicators from the Keychain, plus whatever is staged but unsaved.
+    /// Repaints every indicator from the Keychain, plus whatever is staged but unsaved.
     private func refreshIndicators() {
         for key in KeychainStore.Key.allCases {
             guard let indicator = indicators[key] else { continue }
-            if key == .privateKey, pendingPrivateKey != nil,
-               KeychainStore.value(for: key) == nil {
+            let staged = (key == .privateKey && pendingPrivateKey != nil)
+                || (key == .reviewsPrivateKey && pendingReviewsPrivateKey != nil)
+            if staged, KeychainStore.value(for: key) == nil {
                 indicator.stringValue = "Ready to save"
                 indicator.textColor = .secondaryLabelColor
             } else if KeychainStore.value(for: key) != nil {
                 indicator.stringValue = "✓ Stored"
                 indicator.textColor = .systemGreen
             } else {
-                indicator.stringValue = "Needed"
+                // The reviews key is optional, and calling its empty fields "Needed" tells users to
+                // create a credential they were just told they probably shouldn't.
+                indicator.stringValue = key.isReviews ? "Optional" : "Needed"
                 indicator.textColor = .secondaryLabelColor
             }
         }
@@ -426,7 +457,12 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
         // Whatever was entered is now saved — say so first. The old copy led with what was still
         // missing, which read as though the save itself had failed.
-        let missing = KeychainStore.Key.allCases.filter { KeychainStore.value(for: $0) == nil }
+        // Only the sales key's four values are required. `Key.allCases` gained three optional
+        // reviews cases in v0.2, so this reported a perfect sales setup as missing an Issuer ID, a
+        // Key ID and a .p8 — naming the three fields the user had just filled in, and nagging them
+        // toward creating a key SECURITY.md spends a section explaining they don't need.
+        let missing = KeychainStore.Key.allCases
+            .filter { !$0.isReviews && KeychainStore.value(for: $0) == nil }
         if missing.isEmpty {
             report("Saved. Fetching your report…")
         } else {
@@ -438,6 +474,9 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     }
 
     @objc private func forget() {
+        // Also clears the reviews key and, through the panel, the cached review text it made
+        // readable. This is the button SECURITY.md advertises as removing everything.
+        defer { onReviewsKeyChanged?() }
         KeychainStore.forgetAll()
         issuerField.stringValue = ""
         keyIDField.stringValue = ""

@@ -16,9 +16,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pollTimer: Timer?
     private var isFetching = false
 
-    /// How far back the first run reaches. Enough for the 7- and 30-day rows and no further; Apple
-    /// keeps daily reports for a year, so a wider net is possible but pointless.
+    /// How far back the first run *fetches*. Enough for the 7- and 30-day rows and no further;
+    /// Apple keeps daily reports for a year, so a wider net is possible but pointless.
     private static let backfillDays = 30
+
+    /// How far back the panel *reads from disk*. Wider than the backfill on purpose and free —
+    /// this is a cache read, not a request.
+    ///
+    /// Without it the "vs previous 30 days" comparison could never appear: rendering loaded exactly
+    /// thirty days, so the thirty days before them were never in hand and the comparison was
+    /// structurally dead. Days accumulate as the app runs, so it fills in on its own.
+    private static let renderDays = 60
 
     override init() {
         backfill = Backfill(provider: ASCClient(), store: ReportStore())
@@ -50,6 +58,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.requestAuthorizationIfNeeded()
         rates = fx.cached()  // Whatever's on disk, so the first render isn't blank.
 
+        // Registered before the credentials guard: a first-launch user who sets up credentials in
+        // the window this guard opens would otherwise get no wake refresh for the whole session.
+        //
+        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
+        // window it slept through. Ask again the moment it wakes.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
+
         guard KeychainStore.hasCredentials else {
             // First launch: nothing to show and nothing to fetch, so open the one window that
             // fixes that rather than sitting there displaying a dash.
@@ -77,12 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Rendering
 
-    private var window: [ReportDate] { ReportDate.yesterday().lastDays(Self.backfillDays) }
+    /// The dates to fetch.
+    private var fetchWindow: [ReportDate] { ReportDate.yesterday().lastDays(Self.backfillDays) }
+    /// The dates to render from cache.
+    private var renderWindow: [ReportDate] { ReportDate.yesterday().lastDays(Self.renderDays) }
 
     /// Renders from disk. Instant, offline, and the reason a relaunch or a metric toggle doesn't
     /// wait on the network.
     private func render(error: Error? = nil) {
-        let days = store.loadAll(window)
+        let days = store.loadAll(renderWindow)
         statusItemController.update(days: days, rates: rates, error: error)
         panelModel.update(days: days, rates: rates, error: error)
     }
@@ -90,6 +109,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Fetching
 
     private func refresh(userInitiated: Bool) {
+        // Registered before the credentials guard: a first-launch user who sets up credentials in
+        // the window this guard opens would otherwise get no wake refresh for the whole session.
+        //
+        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
+        // window it slept through. Ask again the moment it wakes.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
+
         guard KeychainStore.hasCredentials else {
             statusItemController.showNoCredentials()
             panelModel.showNoCredentials()
@@ -100,7 +127,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         refreshRates { [weak self] in
             guard let self else { return }
-            self.backfill.run(dates: self.window, userInitiated: userInitiated, onDay: { day in
+            self.backfill.run(dates: self.fetchWindow, userInitiated: userInitiated,
+                              onDay: { day in
                 DispatchQueue.main.async {
                     // Days land independently, so the menu fills in as they arrive.
                     self.render()
@@ -150,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window the answer cannot change, so asking is pure noise.
     private func reschedule() {
         pollTimer?.invalidate()
-        let newest = store.loadAll(window).map(\.date).max()
+        let newest = store.loadAll(renderWindow).map(\.date).max()
         let next = Schedule.nextPoll(newestCached: newest)
 
         let timer = Timer(fireAt: next, interval: 0, target: self,

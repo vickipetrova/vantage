@@ -41,13 +41,55 @@ final class MoneyTests: XCTestCase {
     }
 
     func testUnconvertedNotesAreOrderedSoTheOutputIsStable() {
-        let text = Money.text(for: ["ZZZ": 1, "AAA": 2, "MMM": 3],
+        // One convertible currency, so this stays on the converted path where the notes live.
+        let text = Money.text(for: ["EUR": 100, "ZZZ": 1, "AAA": 2, "MMM": 3],
                               rates: rates, displayCurrency: "USD")
         XCTAssertEqual(text.notes.count, 3)
         // Dictionary iteration order is not stable; the notes must be.
         XCTAssertTrue(text.notes[0].contains("AAA"), text.notes[0])
         XCTAssertTrue(text.notes[1].contains("MMM"), text.notes[1])
         XCTAssertTrue(text.notes[2].contains("ZZZ"), text.notes[2])
+    }
+
+    /// The converted-looking zero, arriving through the door the first guard didn't cover.
+    ///
+    /// Apple pays in plenty of currencies the ECB doesn't publish — TWD, AED, VND, NGN. A developer
+    /// selling only in one of those has a rate table that simply doesn't apply to them, and the
+    /// converted total is a true zero standing in front of real revenue.
+    func testRatesThatConvertNothingDoNotProduceAConvertedZero() {
+        let text = Money.text(for: ["TWD": 30_000], rates: rates, displayCurrency: "USD")
+        XCTAssertFalse(text.headline.contains("≈"),
+                       "Nothing was converted, so nothing may claim to be: \(text.headline)")
+        XCTAssertTrue(text.headline.contains("30,000") || text.headline.contains("30000"),
+                      text.headline)
+        XCTAssertEqual(text.sortKey, 30_000)
+        XCTAssertFalse(text.isComparable, "Nothing was converted, so nothing may be ranked on it")
+    }
+
+    func testSeveralUnconvertibleCurrenciesFallBackToTheLargestPlusACount() {
+        let text = Money.text(for: ["TWD": 30_000, "VND": 500], rates: rates, displayCurrency: "USD")
+        XCTAssertEqual(text.notes, ["+ 1 other currency"])
+        XCTAssertFalse(text.isComparable)
+    }
+
+    // MARK: - Comparability
+
+    func testAConvertedFigureIsComparable() {
+        XCTAssertTrue(Money.text(for: ["EUR": 100], rates: rates,
+                                 displayCurrency: "USD").isComparable)
+    }
+
+    func testAFigureWithoutRatesIsNotComparable() {
+        XCTAssertFalse(Money.text(for: ["EUR": 100], rates: nil,
+                                  displayCurrency: "USD").isComparable)
+    }
+
+    /// Ranking on a raw amount ranks by exchange rate: ¥15,000 is about $100 and would beat $900.
+    func testWithoutRatesTheDisplayCurrencyIsPreferredOverTheBiggestNumber() {
+        let text = Money.text(for: ["JPY": 15_000, "USD": 900], rates: nil,
+                              displayCurrency: "USD")
+        XCTAssertTrue(text.headline.contains("900"), text.headline)
+        XCTAssertEqual(text.notes, ["+ 1 other currency"])
     }
 
     // MARK: - Without rates
@@ -116,6 +158,32 @@ final class MoneyTests: XCTestCase {
                               rates: rates, displayCurrency: "USD", compact: true)
         XCTAssertEqual(text.sortKey, Decimal(string: "142.37")!,
                        "Rounding is for display only; ranking uses the real number")
+    }
+
+    // MARK: - The currency label itself
+
+    /// Mutation testing found this one: replacing `largest.key` with `displayCurrency` in the
+    /// no-rates path passed the entire suite, and renders ¥50,000 as **"$50,000"**.
+    ///
+    /// Every other test here asserted the *amount* and never the currency it was labelled with,
+    /// which is the half that turns a number into a lie.
+    func testWithoutRatesTheAmountIsLabelledWithItsOwnCurrency() {
+        let text = Money.text(for: ["JPY": 50_000], rates: nil, displayCurrency: "USD")
+        XCTAssertFalse(text.headline.contains("$"),
+                       "A yen amount labelled in dollars: \(text.headline)")
+        XCTAssertTrue(text.headline.contains("¥") || text.headline.contains("JPY"), text.headline)
+    }
+
+    /// Same trap on the rates-present-but-inapplicable path.
+    func testAnUnconvertibleAmountIsLabelledWithItsOwnCurrency() {
+        let text = Money.text(for: ["TWD": 30_000], rates: rates, displayCurrency: "USD")
+        XCTAssertFalse(text.headline.hasPrefix("$"), text.headline)
+        XCTAssertTrue(text.headline.contains("NT$") || text.headline.contains("TWD"), text.headline)
+    }
+
+    func testAConvertedFigureIsLabelledInTheDisplayCurrency() {
+        let text = Money.text(for: ["EUR": 100], rates: rates, displayCurrency: "GBP")
+        XCTAssertTrue(text.headline.contains("£") || text.headline.contains("GBP"), text.headline)
     }
 
     // MARK: - Decimal discipline

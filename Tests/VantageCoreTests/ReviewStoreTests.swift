@@ -71,6 +71,12 @@ final class ReviewStoreTests: XCTestCase {
         XCTAssertTrue(store.needsFetch("6478", now: now.addingTimeInterval(ReviewStore.maxAge + 1)))
     }
 
+    /// Pinned as a literal: the staleness tests are written against the constant, so widening it
+    /// to a week left them all passing while a deleted reply would linger for that week.
+    func testTheCacheLifetimeIsOneHour() {
+        XCTAssertEqual(ReviewStore.maxAge, 60 * 60)
+    }
+
     // MARK: - Corruption and paths
 
     /// Same rule as the report cache: unusable is treated as absent, because the fix for both is a

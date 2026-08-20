@@ -86,6 +86,8 @@ final class PanelModel: ObservableObject {
         guard icons[appleID] == nil, !requestedIcons.contains(appleID) else { return }
         requestedIcons.insert(appleID)
         iconProvider.icon(for: appleID) { [weak self] data in
+            // Decoding happens on whatever queue the provider calls back on — deliberately not the
+            // main one. Only the assignment hops back.
             guard let data, let image = NSImage(data: data) else { return }
             DispatchQueue.main.async { self?.icons[appleID] = image }
         }
@@ -160,6 +162,12 @@ final class PanelModel: ObservableObject {
 
         isLoadingReviews = true
         reviewsError = nil
+        // A completion that never arrives would otherwise latch `isLoadingReviews` and block every
+        // later load for the life of the process. The provider's timeout is 30s per request.
+        let deadline = DispatchTime.now() + .seconds(60 + outstanding.count * 30)
+        DispatchQueue.main.asyncAfter(deadline: deadline) { [weak self] in
+            self?.isLoadingReviews = false
+        }
         fetchReviews(outstanding, index: 0)
     }
 
@@ -197,6 +205,7 @@ final class PanelModel: ObservableObject {
     func reviewsKeyChanged() {
         hasReviewsKey = KeychainStore.hasReviewsKey
         repliesEnabled = Prefs.repliesEnabled
+        writer = Self.makeWriter()
         if !repliesEnabled { drafts = [:] }
         if !hasReviewsKey {
             reviews = [:]
@@ -204,7 +213,9 @@ final class PanelModel: ObservableObject {
             reviewsError = ReviewsError.noKey
         } else {
             reviewsError = nil
-            loadReviews(force: true)
+            // Not `force: true`. This is also called by the replies checkbox, which has nothing to
+            // do with fetching — forcing would fire one request per app from a toggle.
+            loadReviews()
         }
     }
 
@@ -217,7 +228,7 @@ final class PanelModel: ObservableObject {
 
     func beginReply(to review: CustomerReview) {
         guard repliesEnabled else { return }
-        drafts[review.id] = ReplyDraft(existing: review.response)
+        drafts[review.id] = ReplyDraft(reviewID: review.id, existing: review.response)
     }
 
     func cancelReply(to reviewID: String) {
@@ -232,21 +243,94 @@ final class PanelModel: ObservableObject {
         drafts[reviewID] = draft
     }
 
-    /// Publishing is **not wired up yet**, deliberately.
+    /// The write capability, or nil.
     ///
-    /// Phase 5 of the v0.2 plan gates the network write behind an explicit sign-off: the composer
-    /// and the confirmation are built and reviewable first, and nothing calls `POST` or `DELETE`
-    /// until that's given. The draft still runs the full state machine so the flow can be seen end
-    /// to end, and reports honestly that the last step is switched off.
+    /// **Nil unless replies are switched on and a key exists**, which is what keeps "a reader can't
+    /// be handed a write" true by construction rather than by a check somebody could forget. It is
+    /// rebuilt whenever Settings changes either condition.
+    private var writer: ReviewsWriter? = PanelModel.makeWriter()
+
+    private static func makeWriter() -> ReviewsWriter? {
+        guard Prefs.repliesEnabled, KeychainStore.hasReviewsKey else { return nil }
+        return ASCReviewsWriter()
+    }
+
+    /// Publishes a confirmed draft.
+    ///
+    /// `draft.confirm()` is the only source of the text, and it returns nil unless the draft is
+    /// awaiting confirmation — so this cannot publish something the user hasn't seen, even if a
+    /// future caller forgets the flow.
     func publishReply(to reviewID: String) {
-        guard var draft = drafts[reviewID], draft.confirm() != nil else { return }
+        // Checked here as well as in `beginReply`: a draft could outlive the setting being turned
+        // back off, and this is the call that would publish.
+        guard repliesEnabled else { return }
+        guard var draft = drafts[reviewID], let confirmed = draft.confirm() else { return }
         drafts[reviewID] = draft
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            draft.failed("Publishing isn't switched on in this build yet — the network step is "
-                         + "deliberately gated until the reply flow has been signed off. Nothing "
-                         + "was sent to Apple.")
-            self?.drafts[reviewID] = draft
+        guard let writer else {
+            draft.failed("Replying is switched off. Enable it in Settings first.")
+            drafts[reviewID] = draft
+            return
+        }
+
+        writer.publishResponse(confirmed) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let response):
+                    draft.succeeded(state: response.state)
+                    self.attach(response, to: reviewID)
+                case .failure(let error):
+                    draft.failed((error as? ReviewsError)?.errorDescription
+                                 ?? "Couldn't publish that reply.")
+                }
+                // Only if the draft is still open. Cancelling, or un-ticking "Enable replying" in
+                // Settings, clears it — and writing the result back would bring it back from the
+                // dead, showing a composer the user had dismissed.
+                guard self.drafts[reviewID] != nil else { return }
+                self.drafts[reviewID] = draft
+            }
+        }
+    }
+
+    /// Removes a published reply. Confirmed by its own sheet before reaching here.
+    func deleteReply(to reviewID: String, responseID: String) {
+        guard let writer else { return }
+        deletingReplies.insert(reviewID)
+        writer.deleteResponse(responseID: responseID) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.deletingReplies.remove(reviewID)
+                switch result {
+                case .success:
+                    self.attach(nil, to: reviewID)
+                case .failure(let error):
+                    self.reviewsError = error
+                }
+            }
+        }
+    }
+
+    /// Reviews currently having their reply deleted, so the row can say so.
+    @Published private(set) var deletingReplies: Set<String> = []
+
+    /// Writes a response back onto the cached review, in memory and on disk.
+    ///
+    /// Apple doesn't publish replies or deletions instantly, so refetching immediately would show
+    /// the *old* state and look like the write had failed. Updating locally from what Apple returned
+    /// is both faster and more accurate until the TTL expires.
+    private func attach(_ response: ReviewResponse?, to reviewID: String) {
+        for (appleID, reviews) in reviews {
+            guard let index = reviews.firstIndex(where: { $0.id == reviewID }) else { continue }
+            let old = reviews[index]
+            var updated = reviews
+            updated[index] = CustomerReview(
+                id: old.id, appleID: old.appleID, rating: old.rating, title: old.title,
+                body: old.body, reviewerNickname: old.reviewerNickname,
+                createdDate: old.createdDate, territory: old.territory, response: response)
+            self.reviews[appleID] = updated
+            reviewStore.save(updated, for: appleID)
+            return
         }
     }
 

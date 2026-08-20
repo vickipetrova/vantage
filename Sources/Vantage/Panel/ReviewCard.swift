@@ -51,7 +51,14 @@ struct ReviewCard: View {
             .font(.caption)
             .foregroundColor(.secondary)
 
-            if let response = review.response { ResponseBlock(response: response) }
+            if let response = review.response {
+                ResponseBlock(response: response,
+                              canDelete: model.repliesEnabled && model.drafts[review.id] == nil,
+                              isDeleting: model.deletingReplies.contains(review.id),
+                              onDelete: {
+                                  model.deleteReply(to: review.id, responseID: response.id)
+                              })
+            }
 
             if let draft = model.drafts[review.id] {
                 ReplyComposer(
@@ -79,6 +86,13 @@ struct ReviewCard: View {
 /// The developer's published reply.
 private struct ResponseBlock: View {
     let response: ReviewResponse
+    let canDelete: Bool
+    let isDeleting: Bool
+    let onDelete: () -> Void
+
+    /// Deleting is a second click, never the first. It removes something published under the
+    /// developer's name, and Apple gives nothing back to undo it with.
+    @State private var confirming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -102,6 +116,31 @@ private struct ResponseBlock: View {
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+
+            if isDeleting {
+                Text("Removing…").font(.caption).foregroundColor(.secondary)
+            } else if confirming {
+                HStack(spacing: Theme.Space.tight) {
+                    Text("Remove this reply from the App Store?")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Keep it") { confirming = false }.controlSize(.small)
+                    // Named for what it does, and only reachable from the confirmation.
+                    Button("Remove reply") {
+                        confirming = false
+                        onDelete()
+                    }
+                    .controlSize(.small)
+                }
+                .padding(.top, 2)
+            } else if canDelete {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button("Delete reply…") { confirming = true }
+                        .controlSize(.small)
+                }
+            }
         }
         .padding(.leading, Theme.Space.row)
         .padding(.top, 2)

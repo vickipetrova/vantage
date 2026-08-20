@@ -19,11 +19,14 @@ struct ReviewsView: View {
     }
 
     var body: some View {
+        // Read once. As a computed property this ran twice per body pass, and each run sorted every
+        // cached review in the portfolio — which the reply composer triggers on every keystroke.
+        let reviews = self.reviews
         VStack(alignment: .leading, spacing: 0) {
             if appleID == nil { header }
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.row) {
-                    content
+                    content(reviews)
                 }
                 .padding(Theme.Space.section)
             }
@@ -81,10 +84,10 @@ struct ReviewsView: View {
     // MARK: - Content
 
     @ViewBuilder
-    private var content: some View {
+    private func content(_ reviews: [CustomerReview]) -> some View {
         if !model.hasReviewsKey {
             NoReviewsKeyCard(onSettings: model.onSettings)
-        } else if let error = model.reviewsError {
+        } else if let error = model.reviewsError, reviews.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.row) {
                 Text((error as? ReviewsError)?.errorDescription ?? "Couldn't load reviews.")
                     .font(.callout)
@@ -99,9 +102,18 @@ struct ReviewsView: View {
                      : "No reviews match. Apple only returns reviews written on the App Store.")
                 .card()
         } else {
-            ForEach(reviews) { review in
-                ReviewCard(model: model, review: review,
-                           appTitle: appleID == nil ? model.titleForApp(review.appleID) : nil)
+            // A refresh that failed while there is still something cached is a warning above the
+            // list, never instead of it. Replacing what somebody is reading with an error card
+            // loses the data they came for, and it's still right there in memory.
+            if let error = model.reviewsError {
+                WarningRow(text: (error as? ReviewsError)?.errorDescription
+                           ?? "Couldn't refresh reviews.")
+            }
+            LazyVStack(alignment: .leading, spacing: Theme.Space.row) {
+                ForEach(reviews) { review in
+                    ReviewCard(model: model, review: review,
+                               appTitle: appleID == nil ? model.titleForApp(review.appleID) : nil)
+                }
             }
         }
     }

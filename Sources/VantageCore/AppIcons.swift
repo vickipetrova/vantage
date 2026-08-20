@@ -34,17 +34,41 @@ public enum ITunesLookup {
         for key in ["artworkUrl100", "artworkUrl60", "artworkUrl512"] {
             if let string = first[key] as? String,
                let url = URL(string: string),
-               url.scheme == "https" {
+               isPermittedArtworkHost(url) {
                 return url
             }
         }
         return nil
     }
 
+    /// Whether a body-supplied artwork URL may be fetched.
+    ///
+    /// **Host, not just scheme.** Refusing redirects does nothing here: this isn't a redirect, it's
+    /// a fresh request the code elects to make from a URL a response body chose. Without a host
+    /// check, any reply from the lookup endpoint could direct Vantage to fetch from anywhere, which
+    /// would make SECURITY.md's list of destinations a description rather than a guarantee.
+    ///
+    /// The leading dot on the suffix matters — without it `evilmzstatic.com` passes.
+    static func isPermittedArtworkHost(_ url: URL) -> Bool {
+        guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
+        return host == host_itunes || host.hasSuffix(".mzstatic.com") || host == "mzstatic.com"
+    }
+
+    static let host_itunes = "itunes.apple.com"
+
+    /// A cap on artwork. A 100pt icon is a few tens of kilobytes; anything past this is not an icon,
+    /// and without a limit a hostile or broken response could write until the disk filled.
+    static let maxArtworkBytes = 4 * 1024 * 1024
+
     static func lookupURL(appleID: String) -> URL? {
+        // Validated all-digits, like every other place an Apple ID leaves this app — here it can't
+        // reach the host or path, but an unvalidated value can inject query parameters and
+        // desynchronize the requested app from the cache filename, which would re-fetch that row's
+        // icon on every launch forever.
+        guard !appleID.isEmpty, appleID.allSatisfy({ $0.isNumber }) else { return nil }
         // `entity=software` keeps the answer to apps: a bare id lookup can match other kinds of
         // store item, and matching the wrong one would put a music cover on a sales row.
-        URL(string: "https://\(host)/lookup?id=\(appleID)&entity=software")
+        return URL(string: "https://\(host)/lookup?id=\(appleID)&entity=software")
     }
 }
 
@@ -116,11 +140,41 @@ public final class ITunesIconClient: AppIconProvider {
         self.store = store
     }
 
-    public func icon(for appleID: String, completion: @escaping (Data?) -> Void) {
-        if let cached = store.load(appleID) {
-            completion(cached)
-            return
+    /// Magic-number check, so only something that is actually an image is cached.
+    ///
+    /// Cheap and in `VantageCore`, which imports Foundation only and so cannot ask `NSImage`.
+    static func looksLikeAnImage(_ data: Data) -> Bool {
+        let prefixes: [[UInt8]] = [
+            [0x89, 0x50, 0x4E, 0x47],  // PNG
+            [0xFF, 0xD8, 0xFF],        // JPEG
+            [0x47, 0x49, 0x46, 0x38],  // GIF
+        ]
+        // "RIFF????WEBP"
+        if data.count >= 12, Array(data.prefix(4)) == Array("RIFF".utf8),
+           Array(data[8..<12]) == Array("WEBP".utf8) {
+            return true
         }
+        return prefixes.contains { data.count >= $0.count && Array(data.prefix($0.count)) == $0 }
+    }
+
+    /// Reads never happen on the caller's thread.
+    ///
+    /// The cached path used to hit the disk and call back inline, so a panel opening with N cached
+    /// apps performed N blocking reads — and N PNG decodes in the caller — inside one render pass.
+    private static let queue = DispatchQueue(label: "com.vickipetrova.vantage.icons",
+                                             qos: .utility)
+
+    public func icon(for appleID: String, completion: @escaping (Data?) -> Void) {
+        Self.queue.async { [store] in
+            if let cached = store.load(appleID) {
+                completion(cached)
+                return
+            }
+            self.fetch(appleID, completion: completion)
+        }
+    }
+
+    private func fetch(_ appleID: String, completion: @escaping (Data?) -> Void) {
         guard let lookup = ITunesLookup.lookupURL(appleID: appleID) else {
             completion(nil)
             return
@@ -131,8 +185,17 @@ public final class ITunesIconClient: AppIconProvider {
                 completion(nil)
                 return
             }
-            Self.session.dataTask(with: artwork) { imageData, _, _ in
-                guard let imageData, !imageData.isEmpty else {
+            Self.session.dataTask(with: artwork) { imageData, response, _ in
+                // Status is checked, unlike an earlier version that cached any non-empty body.
+                // A 404's HTML — or the redirect body `NoRedirects` deliberately hands back — would
+                // otherwise be written as `<appleID>.png` and kept forever, since the cache only
+                // refetches when the file is missing. One transient error, one permanently broken
+                // icon.
+                guard let imageData, !imageData.isEmpty,
+                      let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      imageData.count <= ITunesLookup.maxArtworkBytes,
+                      Self.looksLikeAnImage(imageData)
+                else {
                     completion(nil)
                     return
                 }

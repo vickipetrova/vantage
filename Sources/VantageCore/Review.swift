@@ -180,6 +180,16 @@ public enum ReviewDecoder {
             response: response)
     }
 
+    /// The body of a successful `POST /v1/customerReviewResponses` — a single resource under
+    /// `data`, rather than the array-plus-`included` shape a listing returns.
+    public static func singleResponse(from data: Data) -> ReviewResponse? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entry = object["data"] as? [String: Any],
+              entry["type"] as? String == "customerReviewResponses"
+        else { return nil }
+        return response(from: entry)
+    }
+
     static func response(from entry: [String: Any]) -> ReviewResponse? {
         guard let id = entry["id"] as? String,
               let attributes = entry["attributes"] as? [String: Any]

@@ -37,10 +37,23 @@ for a second key instead, and stores it as its own Keychain items.
 section says so and offers nothing else. Removing it later (**Settings › Remove reviews key**)
 deletes the cached review text along with it, and leaves sales working.
 
-Vantage's reviews key **only reads**. It never publishes, edits or deletes a reply — the API can do
-all three, and a later version may, but that will be off by default and behind its own explicit
-consent step, because replying requires an Admin key in practice. See `docs/REVIEWS_API.md`, which
-records the contradiction between two of Apple's own documentation pages on this point.
+**Replying is off by default and stays off until you switch it on.** Left alone, the reviews key
+only ever reads: the type that can publish (`ASCReviewsWriter`) is not constructed at all unless
+you've enabled replies *and* a key exists, so there is no code path that could publish by accident.
+
+If you do switch it on, two things are true and stated in Settings before you do:
+
+- **It needs an Admin key**, not the App Manager key reading requires. An Admin key can change
+  pricing, submit and remove builds, manage users and read your financial reports. Vantage would use
+  it for one thing, but that isn't the same as it being unable to do the rest.
+- **Nothing is ever published without you confirming the exact text first.** That isn't a dialog
+  somebody could skip — the draft type has no transition from "editing" to "sending", so publishing
+  without a confirmation is not something the code can express. Replacing an existing reply shows
+  what will be overwritten, because Apple's endpoint is create-or-update with no distinction and
+  will never tell you.
+
+See `docs/REVIEWS_API.md` for who may reply at all, and for which of these facts Apple actually
+publishes versus which are community-tested.
 
 Keys are revocable. If you ever want Vantage to stop having access, revoke the key in App Store
 Connect (Users and Access › Integrations) — that works whether or not you still have the app
@@ -72,6 +85,7 @@ Four hosts. That is the entire network surface of this application.
 GET https://api.appstoreconnect.apple.com/v1/salesReports          (your reports)
 GET https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml  (currency rates)
 GET https://api.appstoreconnect.apple.com/v1/apps/…/customerReviews (reviews, if you added a key)
+POST/DELETE …/v1/customerReviewResponses…                          (only if you enable replying)
 GET https://itunes.apple.com/lookup?id=…&entity=software           (app icons)
 GET https://*.mzstatic.com/…                                       (the icon image itself)
 ```
@@ -95,9 +109,17 @@ next request — and, for App Store Connect, your bearer token with it — somew
 doesn't mention. Refusing redirects is what makes "four destinations" something the code enforces
 rather than a description of how it currently happens to behave.
 
-The icon lookup is the only place where a response body chooses the next URL Vantage fetches, so
-that URL must be `https` before it is requested at all, and a redirect from it fails the icon rather
-than being followed. A missing icon is a blank tile; it is never a reason to follow a stranger.
+**Two places take a URL out of a response body and then fetch it**: the icon lookup's artwork URL,
+and the reviews API's `links.next` pagination link. Refusing redirects does nothing about either —
+these aren't redirects, they're fresh requests the code chooses to make from a URL something else
+supplied. Both are therefore checked against an expected host before being requested, which is what
+makes the list above a guarantee rather than a description:
+
+- **artwork** must be `https` on `itunes.apple.com` or `*.mzstatic.com`. It carries no credential.
+- **`links.next`** must be `https` on `api.appstoreconnect.apple.com`, matched exactly — that one
+  carries a bearer token, so it gets the stricter check.
+
+A missing icon is a blank tile; it is never a reason to follow a stranger.
 
 The App Store Connect request carries a freshly minted ES256 JWT, signed locally with your private
 key. Apple rejects tokens for this endpoint that live longer than 20 minutes; Vantage issues them
@@ -126,8 +148,12 @@ by anything running as your user, exactly like any other app's Application Suppo
 contain no credentials. Delete the folder any time; Vantage will refetch what it can (Apple keeps
 daily reports for one year).
 
-`UserDefaults` (`com.vickipetrova.vantage`) holds preferences only: display currency, notification
-toggle, and a marker for which day was last notified about.
+`UserDefaults` (`com.vickipetrova.vantage`) holds preferences only, and no credential: display
+currency, which metrics count as downloads, the chart series, the Overview range, the notification
+toggle, a marker for which day was last notified about — and **`repliesEnabled`**, the switch that
+decides whether Vantage may publish a review reply at all. That last one is listed here because it
+is the only preference with a security consequence; it defaults to off, and turning it on is the
+consent step described above.
 
 ## Reading this yourself
 
@@ -142,6 +168,8 @@ The parts worth auditing, in the order they matter:
 | `Sources/VantageCore/AppIcons.swift` | The two unauthenticated requests, and that they carry no credential |
 | `Sources/VantageCore/ASCToken.swift` | One JWT implementation for both keys, and the `scope` claim that limits each token to one request |
 | `Sources/VantageCore/ASCReviewsClient.swift` | That the reviews key is read-only and never used for sales |
+| `Sources/VantageCore/ASCReviewsWriter.swift` | The only code that can publish, and that it isn't built unless you asked for it |
+| `Sources/VantageCore/ReplyDraft.swift` | That publishing without confirming is un-expressible, not merely discouraged |
 
 Two habits in the source worth knowing about, because they're the kind of thing that gets undone by
 accident:

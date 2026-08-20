@@ -10,6 +10,26 @@ import Foundation
 /// The stakes are why: a reply is published to the App Store under the developer's name, visible to
 /// everyone, and Apple's `POST` is create-*or-update* with no distinction — so an accidental send
 /// can silently overwrite a reply that was already there.
+/// Text that has been through a confirmation, and the only thing `ReviewsWriter` will publish.
+///
+/// **This is what makes the invariant hold outside `ReplyDraft`.** The state machine could always
+/// prove that *it* never reached `.sending` without a confirmation — but `confirm()` used to return
+/// a `String`, and nothing obliged a caller to use it rather than reading `draft.text` directly.
+/// Publishing unconfirmed text was still expressible; it just wasn't what the code happened to do.
+///
+/// The initializer is `fileprivate`, so the only way to obtain one is `ReplyDraft.confirm()`. A
+/// caller that skips the confirmation now has no way to construct the argument.
+public struct ConfirmedReply: Equatable {
+    public let reviewID: String
+    /// Already normalized. What will appear on the App Store, byte for byte.
+    public let body: String
+
+    fileprivate init(reviewID: String, body: String) {
+        self.reviewID = reviewID
+        self.body = body
+    }
+}
+
 public struct ReplyDraft: Equatable {
     public enum Stage: Equatable {
         /// Being typed. The only state the text can change in.
@@ -24,11 +44,15 @@ public struct ReplyDraft: Equatable {
 
     public private(set) var stage: Stage
     public private(set) var text: String
+    /// The review being answered. Carried here so a confirmation is bound to one review and can't
+    /// be handed to a call that publishes it against another.
+    public let reviewID: String
     /// The reply already published, if any. Its presence changes the confirmation from "publish" to
     /// "replace", which is the difference between adding a reply and overwriting one.
     public let existing: ReviewResponse?
 
-    public init(existing: ReviewResponse? = nil) {
+    public init(reviewID: String, existing: ReviewResponse? = nil) {
+        self.reviewID = reviewID
         self.existing = existing
         self.text = existing?.body ?? ""
         self.stage = .editing
@@ -57,15 +81,13 @@ public struct ReplyDraft: Equatable {
         return true
     }
 
-    /// Step two of two, and **the only way into `.sending`**.
-    ///
-    /// Returns the text to publish, or nil when the draft isn't awaiting confirmation — which is
-    /// what makes "send without confirming" un-expressible rather than merely discouraged.
+    /// Step two of two, and **the only way into `.sending`** — and the only way to obtain a
+    /// `ConfirmedReply`, which is the only thing that can be published.
     @discardableResult
-    public mutating func confirm() -> String? {
+    public mutating func confirm() -> ConfirmedReply? {
         guard stage == .awaitingConfirmation else { return nil }
         stage = .sending
-        return ReplyValidation.normalize(text)
+        return ConfirmedReply(reviewID: reviewID, body: ReplyValidation.normalize(text))
     }
 
     /// Backing out of the confirmation returns to editing with the text intact.

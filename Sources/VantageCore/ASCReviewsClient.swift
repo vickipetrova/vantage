@@ -3,8 +3,10 @@ import Foundation
 /// Reads customer reviews from App Store Connect.
 ///
 /// Same host and the same redirect-refusing session as `ASCClient`, but a **different key**: the
-/// sales key can't see reviews, and this one is never used for sales. Each client is handed its own
-/// credentials closure, so that separation is structural rather than a convention.
+/// sales key can't see reviews, and this one is never used for sales. Each client takes its own
+/// credentials closure, defaulting to its own Keychain items — so the separation lives in the
+/// storage and the wiring. Both keys are `ASCKey`, so it isn't the type system that stops them
+/// being swapped; see the note on `KeychainStore`.
 ///
 /// There is no portfolio-wide reviews endpoint. Reviews are per app, so a whole-portfolio view is
 /// one request per app — which is why fetching happens when the section is opened rather than on

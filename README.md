@@ -89,9 +89,10 @@ what a leaked key could do — so Vantage asks for a separate key with the **App
 stores it separately. Add it under **Settings › Reviews key**; leave it blank and Vantage behaves
 exactly as it did without it.
 
-Vantage's reviews key only reads. Replying to a review needs an Admin key in practice, which is a
-much bigger thing to hand an app — see [docs/REVIEWS_API.md](docs/REVIEWS_API.md), which records the
-contradiction between two of Apple's own documentation pages about it.
+Vantage's reviews key only reads unless you explicitly switch replying on, and replying needs an
+Admin key in practice — a much bigger thing to hand an app. See
+[docs/REVIEWS_API.md](docs/REVIEWS_API.md) for which roles Apple grants what, and for which of those
+facts Apple actually publishes.
 
 > [!NOTE]
 > **Setup is a form, not a walkthrough.** It assumes you already know what an Issuer ID is. A guided
