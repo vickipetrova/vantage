@@ -13,6 +13,7 @@ public enum Prefs {
         static let morningNotification = "morningNotification"
         static let trendSeries = "trendSeries"
         static let overviewRange = "overviewRange"
+        static let repliesEnabled = "repliesEnabled"
     }
 
     /// What the menu bar renders money in. Defaults to the currency of the user's region, which is
@@ -86,6 +87,18 @@ public enum Prefs {
             return range
         }
         set { defaults.set(newValue.rawValue, forKey: Key.overviewRange) }
+    }
+
+    /// Whether Vantage may publish replies to customer reviews.
+    ///
+    /// **Off unless explicitly turned on**, and it stays that way: replying needs an Admin key in
+    /// practice, which is a far more powerful thing to hand an app than the App Manager key reading
+    /// reviews requires. Defaulting this on — or flipping it as a side effect of adding a key —
+    /// would mean somebody who only wanted to *see* their reviews ends up with an app that can
+    /// publish under their name. See the consent step in Settings and `docs/REVIEWS_API.md`.
+    public static var repliesEnabled: Bool {
+        get { defaults.bool(forKey: Key.repliesEnabled) }
+        set { defaults.set(newValue, forKey: Key.repliesEnabled) }
     }
 
     public static var morningNotification: Bool {

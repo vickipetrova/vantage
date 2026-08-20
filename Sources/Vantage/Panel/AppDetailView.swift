@@ -86,7 +86,7 @@ struct AppDetailView: View {
                          ? "Loading reviews…" : "No reviews for this app yet.")
             } else {
                 ForEach(reviews.prefix(5)) { review in
-                    ReviewCard(review: review, appTitle: nil)
+                    ReviewCard(model: model, review: review, appTitle: nil)
                 }
                 if reviews.count > 5 {
                     Button("See all \(reviews.count) reviews") { model.navigate(to: .reviews) }

@@ -196,6 +196,8 @@ final class PanelModel: ObservableObject {
     /// Called when Settings changes a key, so the section stops showing a stale empty state.
     func reviewsKeyChanged() {
         hasReviewsKey = KeychainStore.hasReviewsKey
+        repliesEnabled = Prefs.repliesEnabled
+        if !repliesEnabled { drafts = [:] }
         if !hasReviewsKey {
             reviews = [:]
             reviewStore.forgetAll()
@@ -203,6 +205,48 @@ final class PanelModel: ObservableObject {
         } else {
             reviewsError = nil
             loadReviews(force: true)
+        }
+    }
+
+    // MARK: - Replies
+
+    /// Whether the reply UI appears at all. Mirrored from `Prefs`, which defaults to off.
+    @Published private(set) var repliesEnabled = Prefs.repliesEnabled
+    /// Open drafts, keyed by review ID. Absent means nobody is replying to that review.
+    @Published private(set) var drafts: [String: ReplyDraft] = [:]
+
+    func beginReply(to review: CustomerReview) {
+        guard repliesEnabled else { return }
+        drafts[review.id] = ReplyDraft(existing: review.response)
+    }
+
+    func cancelReply(to reviewID: String) {
+        drafts[reviewID] = nil
+    }
+
+    /// The composer edits through here so `ReplyDraft` stays the only thing that decides which
+    /// transitions are legal — a view holding a mutable copy could otherwise skip a step.
+    func updateDraft(_ reviewID: String, _ change: (inout ReplyDraft) -> Void) {
+        guard var draft = drafts[reviewID] else { return }
+        change(&draft)
+        drafts[reviewID] = draft
+    }
+
+    /// Publishing is **not wired up yet**, deliberately.
+    ///
+    /// Phase 5 of the v0.2 plan gates the network write behind an explicit sign-off: the composer
+    /// and the confirmation are built and reviewable first, and nothing calls `POST` or `DELETE`
+    /// until that's given. The draft still runs the full state machine so the flow can be seen end
+    /// to end, and reports honestly that the last step is switched off.
+    func publishReply(to reviewID: String) {
+        guard var draft = drafts[reviewID], draft.confirm() != nil else { return }
+        drafts[reviewID] = draft
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            draft.failed("Publishing isn't switched on in this build yet — the network step is "
+                         + "deliberately gated until the reply flow has been signed off. Nothing "
+                         + "was sent to Apple.")
+            self?.drafts[reviewID] = draft
         }
     }
 
