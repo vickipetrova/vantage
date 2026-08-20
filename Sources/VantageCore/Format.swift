@@ -85,6 +85,23 @@ public enum Fmt {
         downloads(units) + downloadArrow
     }
 
+    /// A rate, to one decimal place. `3.4%`.
+    ///
+    /// One decimal rather than none: page view rates live in the low single digits, and rounding
+    /// 3.4% and 2.6% both to "3%" hides the only movement there is.
+    public static func percent(_ value: Decimal) -> String {
+        let rounded = NSDecimalNumber(decimal: value).rounding(
+            accordingToBehavior: NSDecimalNumberHandler(
+                roundingMode: .plain, scale: 1, raiseOnExactness: false, raiseOnOverflow: false,
+                raiseOnUnderflow: false, raiseOnDivideByZero: false))
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = .current
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        return (formatter.string(from: rounded) ?? rounded.stringValue) + "%"
+    }
+
     /// A day against a baseline: `▲ 24%`, `▼ 8%`, or `—` when there's nothing to compare with.
     ///
     /// Percentages of a zero baseline are undefined, not infinite, and a day's first sale is not a

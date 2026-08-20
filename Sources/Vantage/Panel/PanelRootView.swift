@@ -31,7 +31,7 @@ struct PanelRootView: View {
             case .reviews:
                 ReviewsView(model: model)
             case .analytics:
-                PlaceholderView(route: .analytics, model: model)
+                AnalyticsView(model: model)
             }
         }
         .id(model.route)
@@ -114,44 +114,5 @@ private struct RailCommand: View {
         .onHover { isHovering = $0 }
         .help(help)
         .accessibilityLabel(help)
-    }
-}
-
-// MARK: - Phase 1 placeholder
-
-/// Stands in until each section is built. Carries one text field on purpose: the reply composer in
-/// Phase 5 depends on a non-activating panel accepting keyboard input, and that assumption is worth
-/// disproving now rather than three phases later.
-private struct PlaceholderView: View {
-    let route: PanelRoute
-    @ObservedObject var model: PanelModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.section) {
-            VStack(alignment: .leading, spacing: Theme.Space.tight) {
-                Text(route.label)
-                    .font(.system(size: 17, weight: .semibold))
-                Text(subtitle)
-                    .font(.callout)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(Theme.Space.section)
-    }
-
-    private var subtitle: String {
-        switch route {
-        case .overview:
-            return "Built."
-        case .appDetail(let appleID):
-            return "App \(appleID)."
-        case .reviews:
-            return "Customer reviews land here in Phase 4."
-        case .analytics:
-            return "Analytics is the last phase, and optional."
-        }
     }
 }

@@ -6,6 +6,65 @@ All notable changes to Vantage are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-21
+
+Vantage's dropdown is gone. The status item now opens a floating panel: an `NSMenu` row can't hold a
+chart, can't take a text field and can't navigate, which made it the ceiling for everything below.
+
+### Added
+
+- **A floating panel** behind the status item, with a slim icon rail for sections. Left click opens
+  it; right click keeps Refresh, Settings and Quit.
+- **A range control** — yesterday, 7 days, 30 days — governing the headline figure, the comparison
+  and the app rows. Remembered between launches.
+- **A chart** of any single series over 30 days, with the selected range shaded. A day Vantage never
+  fetched is drawn as a gap rather than a zero, the range always includes zero, and refund days keep
+  their sign.
+- **App detail**, reached by clicking an app row: that app's figures, its own chart, and its reviews.
+- **App icons** beside each row, from Apple's public storefront lookup.
+- **Customer reviews**, behind an optional second App Store Connect key with the App Manager role —
+  the sales key stays on its minimal role. Filter by rating and by unanswered.
+- **Replying to reviews**, off by default and behind an explicit consent step, because replying
+  needs an Admin key in practice. Nothing is published without confirming the exact text; replacing
+  an existing reply shows what will be overwritten, since Apple's endpoint is create-or-update and
+  will never tell you.
+- **Analytics** — App Store impressions, page views and the rate between them, which no sales report
+  contains.
+- **Settings**, rebuilt as three tabs of grouped forms with per-field state, instead of one 860pt
+  column.
+
+### Changed
+
+- The menu bar title is unchanged, deliberately.
+- Per-app rows are no longer capped at eight, and are ranked by converted proceeds — or by units when
+  no rate table makes them comparable.
+- The panel reads 60 days from disk while still fetching 30, so month-over-month comparison works.
+
+### Fixed
+
+- Range totals were selected by position in the cache rather than by date, so a gap made "Last 7
+  days" reach back past the range and total days its own heading didn't cover.
+- Proceeds in a currency the ECB doesn't publish rendered as a converted `≈ $0.00` when a rate table
+  existed but didn't apply to any of them.
+- Comparisons measured raw totals across windows of different cached lengths, so eight flat days
+  read as a 600% rise.
+- `Fmt.wrap` and the eight-row cap are gone with the menu that needed them.
+
+### Security
+
+- The network surface is now **five hosts**, all named in `SECURITY.md`. Two were added for app
+  icons and one for analytics report files — the last is a pre-signed Amazon S3 URL, the only
+  destination that isn't Apple's, fetched on a session that carries no credential and verified
+  against Apple's checksum before parsing.
+- Both places where a response body chooses the next URL — the artwork link and the reviews
+  `links.next` — are checked for host as well as scheme. Refusing redirects does nothing about a URL
+  the code elects to fetch.
+- Apple IDs and resource IDs that become filenames or URL path components are **validated, not
+  sanitized**. Stripping non-digits defeats a traversal while silently addressing a different real
+  app.
+- `docs/REVIEWS_API.md` previously claimed Apple's own documentation pages contradicted each other
+  about who may reply to a review. They don't; the correction is recorded in that file.
+
 First release, not yet tagged.
 
 ### Added

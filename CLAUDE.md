@@ -54,6 +54,10 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/AppDetailModel.swift` | One app's slice, narrowed then handed to `OverviewModel` |
 | `Sources/VantageCore/ReplyDraft.swift` | Where confirm-before-send is enforced, as a state machine |
 | `Sources/VantageCore/ASCReviewsWriter.swift` | The only type that can publish a reply |
+| `Sources/VantageCore/Analytics.swift` | Analytics models, JSON:API decoding, the S3 host check |
+| `Sources/VantageCore/ASCAnalyticsClient.swift` | The four-step analytics lifecycle |
+| `Sources/VantageCore/SegmentParser.swift` | Gzipped TSV → `EngagementDay` |
+| `Sources/VantageCore/AnalyticsStore.swift` | Merging archive — Apple keeps instances 35 days |
 | `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
 | `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on every host |
 | `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → panel, rates, poll timer, wake |
@@ -89,10 +93,15 @@ eventually) one new file.
 3. **Money is `Decimal`.** Never `Double`, not even briefly, not even for a sort key.
 4. **All TSV parsing degrades gracefully.** A malformed row is skipped and counted in
    `DaySales.skippedRows`. Unknown product types count toward proceeds, never toward downloads.
-5. **Four network destinations**, enforced by `NoRedirects` rather than merely documented:
-   App Store Connect, the ECB, and — since v0.2, for app icons only — `itunes.apple.com` and
-   `*.mzstatic.com`. Adding a fifth means changing `SECURITY.md`, which states all four and what
-   each carries.
+5. **Five network destinations**, enforced by `NoRedirects` rather than merely documented:
+   App Store Connect, the ECB, `itunes.apple.com` and `*.mzstatic.com` for app icons, and
+   `*.amazonaws.com` for analytics report files. Adding a sixth means changing `SECURITY.md`, which
+   states all five and what each carries.
+
+   **`*.amazonaws.com` is the only one that isn't Apple's**, and the only one that can't be named
+   exactly — Apple serves analytics segments as pre-signed S3 URLs whose bucket and region vary. It
+   is fetched on a session with no additional headers at all, so no token can reach it, and the
+   bytes are checksummed before parsing.
 
    **Two places take a URL from a response body and then fetch it**: the icon lookup's
    `artworkUrl*`, and the reviews API's `links.next`. Both are checked for `https` **and** an
@@ -122,6 +131,21 @@ it. The claim came from a summarised read that conflated the "View ratings and r
 
 Reviews are **per app** — there is no portfolio endpoint — so a portfolio view is one request per
 app. That's why they're fetched when the section is opened and never from the poll timer.
+
+## Analytics
+
+`docs/ANALYTICS_API.md` is the reference. The short version: nothing about that API is one request —
+create a report request (**Admin only**), wait 24–48 hours, list reports, list instances, list
+segments, download each from a pre-signed S3 URL that expires in **five minutes**.
+
+Three things that bite:
+
+- **`processingDate` is not the date the data describes.** The rows carry their own `Date` column.
+- **Instances are kept 35 days.** `AnalyticsStore` merges rather than replaces, so older days exist
+  only in Vantage's copy.
+- **Swift treats `\r\n` as one `Character`**, so `split(separator: "\n")` never matches it.
+  Normalize line endings first, as `ReportParser` does. `SegmentParser` shipped with this wrong and
+  a test caught it.
 
 ## The report format
 

@@ -30,6 +30,25 @@ final class ReportParserTests: XCTestCase {
 
     // MARK: - A believable day
 
+    /// Swift treats CRLF as a single `Character`, so a parser that splits on "\n" and strips a
+    /// trailing "\r" afterwards reads a CRLF file as one enormous line and finds nothing. This one
+    /// normalizes first; the sibling analytics parser did not, and shipped with the bug until a
+    /// test found it.
+    func testCRLFLineEndingsParseTheSameAsLF() {
+        let lf = "Provider\tSKU\tDeveloper Proceeds\tUnits\tApple Identifier\tTitle\t"
+            + "Product Type Identifier\tCurrency of Proceeds\tParent Identifier\n"
+            + "APPLE\tSKU1\t1.50\t10\t123\tMy App\t1\tUSD\t\n"
+        let crlf = lf.replacingOccurrences(of: "\n", with: "\r\n")
+        let date = ReportDate(year: 2026, month: 8, day: 19)
+
+        let fromLF = ReportParser.parse(lf, date: date, fetchedAt: Date())
+        let fromCRLF = ReportParser.parse(crlf, date: date, fetchedAt: Date())
+
+        XCTAssertEqual(fromLF.downloads, 10)
+        XCTAssertEqual(fromCRLF.downloads, fromLF.downloads)
+        XCTAssertEqual(fromCRLF.proceeds, fromLF.proceeds)
+    }
+
     func testTypicalDayTotals() throws {
         let day = try parse("typical-day.tsv")
         XCTAssertEqual(day.downloads, 133)
