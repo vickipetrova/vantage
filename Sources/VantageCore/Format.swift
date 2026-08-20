@@ -101,6 +101,12 @@ public enum Fmt {
         return "\(reportDate(start)) – \(reportDate(end))"
     }
 
+    /// A review's date. A real instant rather than a report day, so it stays in the local zone —
+    /// unlike everything derived from a sales report, which is Pacific.
+    public static func reviewDate(_ date: Date) -> String {
+        reviewDateFormatter.string(from: date)
+    }
+
     /// Local wall-clock time in the user's 12- or 24-hour preference, for "fetched HH:mm".
     public static func clock(_ date: Date) -> String {
         clockFormatter.string(from: date)
@@ -125,6 +131,14 @@ public enum Fmt {
         // regions, and the template picks whichever the reader expects.
         formatter.setLocalizedDateFormatFromTemplate("dMMM")
         formatter.timeZone = ReportDate.pacific
+        return formatter
+    }()
+
+    private static let reviewDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
         return formatter
     }()
 

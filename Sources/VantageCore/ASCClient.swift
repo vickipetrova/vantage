@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// The App Store Connect half: mint a JWT, ask for one day's Summary Sales report, decompress it.
@@ -53,7 +52,8 @@ public struct ASCClient: SalesProvider {
 
         let query = Self.query(vendorNumber: credentials.vendorNumber, date: date)
         guard let url = URL(string: "https://\(Self.host)/v1/salesReports?\(query)"),
-              let token = try? Self.token(for: credentials, path: "/v1/salesReports?\(query)")
+              let token = try? ASCToken.mint(key: credentials.key, method: "GET",
+                                             path: "/v1/salesReports?\(query)")
         else {
             completion(.failure(SalesError.noCredentials))
             return
@@ -129,53 +129,4 @@ public struct ASCClient: SalesProvider {
         ].joined(separator: "&")
     }
 
-    // MARK: - The token
-
-    /// How long a minted token stays valid. Apple rejects anything over 20 minutes for this
-    /// endpoint; five is plenty for a batch of at most thirty requests and limits what a leaked
-    /// token is worth.
-    static let tokenLifetime: TimeInterval = 5 * 60
-
-    /// Mints an ES256 JWT for one request.
-    ///
-    /// `path` is the exact path and query the token will be used against, so the `scope` claim
-    /// matches. Scope is optional in Apple's spec; setting it means a token that escapes somehow
-    /// can fetch one report for one day and nothing else — not, say, the whole account.
-    static func token(for credentials: Credentials, path: String,
-                      now: Date = Date()) throws -> String {
-        let issuedAt = Int(now.timeIntervalSince1970)
-        let header: [String: Any] = [
-            "alg": "ES256",
-            "kid": credentials.keyID,
-            "typ": "JWT",
-        ]
-        let payload: [String: Any] = [
-            "iss": credentials.issuerID,
-            "iat": issuedAt,
-            "exp": issuedAt + Int(tokenLifetime),
-            "aud": "appstoreconnect-v1",
-            "scope": ["GET \(path)"],
-        ]
-
-        let signingInput = try base64URL(json: header) + "." + base64URL(json: payload)
-        let key = try P256.Signing.PrivateKey(pemRepresentation: credentials.privateKey)
-        // JWS wants the raw r‖s pair, 64 bytes. `derRepresentation` is the other encoding and is
-        // silently accepted by nothing.
-        let signature = try key.signature(for: Data(signingInput.utf8)).rawRepresentation
-        return signingInput + "." + base64URL(signature)
-    }
-
-    private static func base64URL(json object: [String: Any]) throws -> String {
-        // `.sortedKeys` only so the same input produces the same token, which makes the signing
-        // path testable. Apple doesn't care about key order.
-        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-        return base64URL(data)
-    }
-
-    private static func base64URL(_ data: Data) -> String {
-        data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
 }

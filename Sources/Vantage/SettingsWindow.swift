@@ -32,6 +32,17 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     private let launchCheckbox = NSButton()
     private let testButton = NSButton()
 
+    // The optional reviews key. Separate fields, separate Keychain items, separate role — see
+    // SECURITY.md. No vendor number: the reviews endpoints don't take one.
+    private let reviewsIssuerField = NSTextField()
+    private let reviewsKeyIDField = NSTextField()
+    private let chooseReviewsKeyButton = NSButton()
+    private let reviewsStatus = NSTextField(labelWithString: "")
+    private var pendingReviewsPrivateKey: String?
+
+    /// Called when the reviews key is added or removed, so the panel stops showing a stale state.
+    var onReviewsKeyChanged: (() -> Void)?
+
     /// One status label per credential, showing what the Keychain actually holds right now.
     ///
     /// Four separate indicators rather than one summary line, because the summary line was
@@ -54,7 +65,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     private func build() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 860),
             styleMask: [.titled, .closable],
             backing: .buffered, defer: false)
         window.title = "Vantage Settings"
@@ -129,6 +140,47 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         saveStatus.maximumNumberOfLines = 3
         saveStatus.preferredMaxLayoutWidth = 400
         stack.addArrangedSubview(saveStatus)
+
+        // MARK: Reviews key
+
+        stack.addArrangedSubview(separator())
+        stack.addArrangedSubview(heading("Reviews key (optional)"))
+        stack.addArrangedSubview(caption(
+            "Reviews need a second App Store Connect key. The Sales and Reports key above can't "
+            + "read them — Apple gates reviews behind a different role — and giving that key a "
+            + "bigger role would widen what it could do with your sales data. Create a separate "
+            + "key with the App Manager role. Leave this blank if you only want sales."))
+
+        stack.addArrangedSubview(field("Issuer ID", reviewsIssuerField, .reviewsIssuerID,
+                                       placeholder: "Same Issuer ID as above"))
+        stack.addArrangedSubview(field("Key ID", reviewsKeyIDField, .reviewsKeyID,
+                                       placeholder: "10 characters"))
+        chooseReviewsKeyButton.title = "Choose .p8…"
+        chooseReviewsKeyButton.target = self
+        chooseReviewsKeyButton.action = #selector(chooseReviewsPrivateKey)
+        chooseReviewsKeyButton.bezelStyle = .rounded
+        stack.addArrangedSubview(labelled("Private key", chooseReviewsKeyButton,
+                                          .reviewsPrivateKey))
+
+        let reviewsButtons = NSStackView()
+        reviewsButtons.orientation = .horizontal
+        reviewsButtons.spacing = 10
+        let saveReviews = NSButton(title: "Save reviews key", target: self,
+                                   action: #selector(saveReviewsKey))
+        saveReviews.bezelStyle = .rounded
+        let forgetReviews = NSButton(title: "Remove reviews key", target: self,
+                                     action: #selector(forgetReviewsKey))
+        forgetReviews.bezelStyle = .rounded
+        reviewsButtons.addArrangedSubview(saveReviews)
+        reviewsButtons.addArrangedSubview(forgetReviews)
+        stack.addArrangedSubview(reviewsButtons)
+
+        reviewsStatus.font = .systemFont(ofSize: 11)
+        reviewsStatus.textColor = .secondaryLabelColor
+        reviewsStatus.lineBreakMode = .byWordWrapping
+        reviewsStatus.maximumNumberOfLines = 3
+        reviewsStatus.preferredMaxLayoutWidth = 400
+        stack.addArrangedSubview(reviewsStatus)
 
         // MARK: Display
 
@@ -236,6 +288,8 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     private func loadFromKeychain() {
         issuerField.stringValue = KeychainStore.value(for: .issuerID) ?? ""
         keyIDField.stringValue = KeychainStore.value(for: .keyID) ?? ""
+        reviewsIssuerField.stringValue = KeychainStore.value(for: .reviewsIssuerID) ?? ""
+        reviewsKeyIDField.stringValue = KeychainStore.value(for: .reviewsKeyID) ?? ""
         vendorField.stringValue = KeychainStore.value(for: .vendorNumber) ?? ""
         saveStatus.stringValue = ""
         pendingPrivateKey = nil
@@ -253,6 +307,17 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     }
 
     @objc private func choosePrivateKey() {
+        guard let contents = readPrivateKey() else { return }
+        pendingPrivateKey = contents
+        refreshIndicators()
+        report("Key loaded. Press Save to store it in your Keychain.")
+    }
+
+    /// Picks and reads a `.p8`, reporting every way it can go wrong.
+    ///
+    /// Shared by both keys deliberately: the reviews picker must fail exactly as informatively as
+    /// the sales one, and a second copy is a second copy to forget to fix.
+    private func readPrivateKey() -> String? {
         let panel = NSOpenPanel()
         panel.title = "Choose your App Store Connect private key"
         panel.message = "The AuthKey_XXXXXXXXXX.p8 file you downloaded from App Store Connect."
@@ -264,14 +329,14 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
         guard panel.runModal() == .OK, let url = panel.url else {
             report("")  // Cancelled. Not a failure, and not worth a message.
-            return
+            return nil
         }
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
             // Never silent. macOS can refuse a read of ~/Downloads or ~/Desktop, and a picker that
             // appears to do nothing is indistinguishable from a broken button.
             report("Couldn't read that file. Try moving it somewhere else and choosing again.",
                    isError: true)
-            return
+            return nil
         }
 
         // Read once, here, and keep only the contents. The path is deliberately not retained: the
@@ -279,11 +344,53 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         // never reach for it again.
         guard contents.contains("PRIVATE KEY") else {
             report("That file isn't a private key — look for AuthKey_XXXXXXXXXX.p8.", isError: true)
-            return
+            return nil
         }
-        pendingPrivateKey = contents
+        return contents
+    }
+
+    // MARK: - The reviews key
+
+    @objc private func chooseReviewsPrivateKey() {
+        guard let contents = readPrivateKey() else { return }
+        pendingReviewsPrivateKey = contents
         refreshIndicators()
-        report("Key loaded. Press Save to store it in your Keychain.")
+        reviewsStatus.stringValue = "Key loaded. Press Save reviews key to store it."
+        reviewsStatus.textColor = .secondaryLabelColor
+    }
+
+    @objc private func saveReviewsKey() {
+        KeychainStore.set(reviewsIssuerField.stringValue, for: .reviewsIssuerID)
+        KeychainStore.set(reviewsKeyIDField.stringValue, for: .reviewsKeyID)
+        if let pendingReviewsPrivateKey {
+            KeychainStore.set(pendingReviewsPrivateKey, for: .reviewsPrivateKey)
+        }
+        pendingReviewsPrivateKey = nil
+        refreshIndicators()
+
+        if KeychainStore.hasReviewsKey {
+            reviewsStatus.stringValue = "Reviews key saved."
+            reviewsStatus.textColor = .secondaryLabelColor
+        } else {
+            let missing = [KeychainStore.Key.reviewsIssuerID, .reviewsKeyID, .reviewsPrivateKey]
+                .filter { KeychainStore.value(for: $0) == nil }
+                .map(label)
+            reviewsStatus.stringValue = "Saved. Still needed: \(missing.joined(separator: ", "))."
+            reviewsStatus.textColor = .secondaryLabelColor
+        }
+        onReviewsKeyChanged?()
+    }
+
+    @objc private func forgetReviewsKey() {
+        KeychainStore.forgetReviewsKey()
+        reviewsIssuerField.stringValue = ""
+        reviewsKeyIDField.stringValue = ""
+        pendingReviewsPrivateKey = nil
+        refreshIndicators()
+        // Cached review text goes with the key that made it readable — see PanelModel.
+        reviewsStatus.stringValue = "Reviews key removed. Sales are unaffected."
+        reviewsStatus.textColor = .secondaryLabelColor
+        onReviewsKeyChanged?()
     }
 
     @objc private func save() {
@@ -377,9 +484,9 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     private func label(_ key: KeychainStore.Key) -> String {
         switch key {
-        case .issuerID: return "Issuer ID"
-        case .keyID: return "Key ID"
-        case .privateKey: return ".p8 key"
+        case .issuerID, .reviewsIssuerID: return "Issuer ID"
+        case .keyID, .reviewsKeyID: return "Key ID"
+        case .privateKey, .reviewsPrivateKey: return ".p8 key"
         case .vendorNumber: return "Vendor Number"
         }
     }

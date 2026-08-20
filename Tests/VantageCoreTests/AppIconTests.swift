@@ -73,6 +73,11 @@ final class AppIconTests: XCTestCase {
         XCTAssertFalse(store.save(Data([1, 2, 3]), for: "../../etc/passwd"))
         XCTAssertFalse(store.save(Data([1, 2, 3]), for: ""))
         XCTAssertNil(store.load("../../etc/passwd"))
+
+        // Validated, not sanitized. Stripping non-digits from this would leave "123" — traversal
+        // defeated, but now reading and writing another app's icon under its own name.
+        XCTAssertFalse(store.save(Data([1, 2, 3]), for: "../../123/passwd"))
+        XCTAssertNil(store.load("../../123/passwd"))
     }
 
     func testRoundTripsThroughTheCache() {

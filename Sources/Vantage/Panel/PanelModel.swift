@@ -91,6 +91,121 @@ final class PanelModel: ObservableObject {
         }
     }
 
+    // MARK: - Reviews
+
+    /// Cached reviews, keyed by Apple ID. There is no portfolio-wide endpoint — reviews are per
+    /// app — so this is assembled one request at a time.
+    @Published private(set) var reviews: [String: [CustomerReview]] = [:]
+    @Published private(set) var reviewsError: Error?
+    @Published private(set) var isLoadingReviews = false
+    /// Mirrored from the Keychain so the empty state can offer the fix rather than an error.
+    @Published private(set) var hasReviewsKey = KeychainStore.hasReviewsKey
+
+    private let reviewsProvider: ReviewsProvider = ASCReviewsClient()
+    private let reviewStore = ReviewStore()
+
+    /// Every app seen anywhere in the cached window, newest report first.
+    ///
+    /// The 30-day window rather than yesterday alone: an app that sold nothing yesterday still has
+    /// reviews, and a portfolio view that quietly drops it is wrong in the direction that's hardest
+    /// to notice.
+    var reviewableAppleIDs: [String] {
+        var seen: Set<String> = []
+        var ordered: [String] = []
+        for day in days {
+            for app in day.apps where !seen.contains(app.appleID) {
+                seen.insert(app.appleID)
+                ordered.append(app.appleID)
+            }
+        }
+        return ordered
+    }
+
+    /// Every cached review across the portfolio, newest first.
+    var allReviews: [CustomerReview] {
+        reviews.values.flatMap { $0 }.sorted { $0.createdDate > $1.createdDate }
+    }
+
+    func titleForApp(_ appleID: String) -> String {
+        for day in days {
+            if let app = day.apps.first(where: { $0.appleID == appleID }) { return app.title }
+        }
+        return appleID
+    }
+
+    /// Loads reviews for every app, from cache first and the network only where the cache is stale.
+    ///
+    /// Called when the Reviews section is opened rather than from the poll timer: a portfolio view
+    /// is one request per app, and spending that on a section nobody has looked at is how an hourly
+    /// rate limit gets used up by an app sitting idle in the menu bar.
+    func loadReviews(force: Bool = false) {
+        hasReviewsKey = KeychainStore.hasReviewsKey
+        guard hasReviewsKey else {
+            reviewsError = ReviewsError.noKey
+            return
+        }
+        guard !isLoadingReviews else { return }
+
+        // Whatever is on disk goes up immediately, stale or not. A blank panel while a fetch runs is
+        // worse than text that's an hour old.
+        for appleID in reviewableAppleIDs {
+            if let cached = reviewStore.load(appleID) { reviews[appleID] = cached }
+        }
+
+        let outstanding = reviewableAppleIDs.filter { force || reviewStore.needsFetch($0) }
+        guard !outstanding.isEmpty else {
+            reviewsError = nil
+            return
+        }
+
+        isLoadingReviews = true
+        reviewsError = nil
+        fetchReviews(outstanding, index: 0)
+    }
+
+    /// One app at a time, spaced out. Sequential for the same reason `Backfill` is: a burst of
+    /// parallel requests is the fastest way to a 429, and the first failure should stop the rest
+    /// rather than repeat itself once per app.
+    private func fetchReviews(_ appleIDs: [String], index: Int) {
+        guard index < appleIDs.count else {
+            isLoadingReviews = false
+            return
+        }
+        let appleID = appleIDs[index]
+        reviewsProvider.reviews(forApp: appleID, limit: 50) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let reviews):
+                    self.reviews[appleID] = reviews
+                    self.reviewStore.save(reviews, for: appleID)
+                case .failure(let error):
+                    // A key that can't read one app can't read any of them, so stop rather than
+                    // fail thirty times with the same message.
+                    self.reviewsError = error
+                    self.isLoadingReviews = false
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.fetchReviews(appleIDs, index: index + 1)
+                }
+            }
+        }
+    }
+
+    /// Called when Settings changes a key, so the section stops showing a stale empty state.
+    func reviewsKeyChanged() {
+        hasReviewsKey = KeychainStore.hasReviewsKey
+        if !hasReviewsKey {
+            reviews = [:]
+            reviewStore.forgetAll()
+            reviewsError = ReviewsError.noKey
+        } else {
+            reviewsError = nil
+            loadReviews(force: true)
+        }
+    }
+
     // MARK: - Commands
 
     var onRefresh: (() -> Void)?
