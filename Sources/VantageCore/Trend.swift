@@ -44,6 +44,26 @@ public enum TrendSeries: Hashable, Sendable {
     }
 }
 
+/// Which engagement figure a chart draws.
+public enum EngagementMetric: String, CaseIterable, Sendable {
+    case impressions
+    case pageViews
+
+    public var label: String {
+        switch self {
+        case .impressions: return "Impressions"
+        case .pageViews: return "Page views"
+        }
+    }
+
+    func value(in day: EngagementDay) -> Decimal {
+        switch self {
+        case .impressions: return day.impressions
+        case .pageViews: return day.pageViews
+        }
+    }
+}
+
 /// One day on the chart.
 public struct TrendPoint: Equatable, Sendable {
     public let date: ReportDate
@@ -165,6 +185,44 @@ public enum Trend {
 
     /// One day's value. `value` is nil when the day can't be stated as a number at all; `partial`
     /// marks a day that could be stated but left something out.
+    /// A chart series over engagement days.
+    ///
+    /// Same rules as the sales series and for the same reasons: a day Apple hasn't produced is a
+    /// **gap**, not a zero, and the drawn range always includes zero so a floor of 40,000
+    /// impressions doesn't turn a 2% wobble into a cliff.
+    public static func engagement(days: [EngagementDay],
+                                  metric: EngagementMetric,
+                                  length: Int,
+                                  endingAt end: ReportDate) -> TrendData {
+        let byDate = Dictionary(days.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
+        let dates = end.lastDays(length).sorted()
+
+        var values: [ReportDate: Decimal] = [:]
+        for date in dates {
+            guard let day = byDate[date] else { continue }
+            values[date] = metric.value(in: day)
+        }
+
+        let present = values.values
+        let lower = min(0, present.min() ?? 0)
+        let upper = max(0, present.max() ?? 0)
+        let span = upper - lower
+
+        let points = dates.map { date -> TrendPoint in
+            guard let value = values[date] else {
+                return TrendPoint(date: date, value: nil, unit: nil)
+            }
+            return TrendPoint(date: date, value: value,
+                              unit: span == 0 ? 0 : Self.double((value - lower) / span))
+        }
+
+        return TrendData(points: points, lower: lower, upper: upper,
+                         zeroUnit: nil,
+                         upperLabel: Fmt.downloads(upper),
+                         lowerLabel: Fmt.downloads(lower),
+                         unavailable: nil, note: nil)
+    }
+
     private static func value(of series: TrendSeries, in day: DaySales, appleID: String?,
                               rates: FXRates?, displayCurrency: String)
         -> (value: Decimal?, partial: Bool) {

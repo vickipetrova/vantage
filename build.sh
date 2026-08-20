@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="Vantage"
-VERSION="0.1.0"
+VERSION="0.2.0"
 BUNDLE_ID="com.vickipetrova.vantage"
 MIN_MACOS="13.0"
 

@@ -210,12 +210,99 @@ final class PanelModel: ObservableObject {
         if !hasReviewsKey {
             reviews = [:]
             reviewStore.forgetAll()
+            // Analytics is readable only because that key exists, so it goes with it.
+            engagement = [:]
+            analyticsStore.forgetAll()
+            analyticsError = AnalyticsError.noKey
             reviewsError = ReviewsError.noKey
         } else {
             reviewsError = nil
             // Not `force: true`. This is also called by the replies checkbox, which has nothing to
             // do with fetching — forcing would fire one request per app from a toggle.
             loadReviews()
+        }
+    }
+
+    // MARK: - Analytics
+
+    /// Engagement days, keyed by Apple ID. Like reviews, this is per app — an analytics report
+    /// request is created against one app.
+    @Published private(set) var engagement: [String: [EngagementDay]] = [:]
+    @Published private(set) var analyticsError: Error?
+    @Published private(set) var isLoadingAnalytics = false
+    @Published private(set) var engagementMetric: EngagementMetric = .impressions
+
+    private let analyticsProvider: AnalyticsProvider = ASCAnalyticsClient()
+    private let analyticsStore = AnalyticsStore()
+
+    func select(_ metric: EngagementMetric) {
+        guard metric != engagementMetric else { return }
+        engagementMetric = metric
+    }
+
+    /// Every app's engagement days, summed by date.
+    var portfolioEngagement: [EngagementDay] {
+        EngagementMerge.merge(engagement.values.flatMap { $0 })
+    }
+
+    /// Loads engagement, cache first and the network only where the cache is stale.
+    ///
+    /// Called when the section opens, never from the poll timer — the same rule reviews follow, and
+    /// for a stronger reason: one refresh here is four requests per app plus a download per segment.
+    func loadAnalytics(force: Bool = false) {
+        hasReviewsKey = KeychainStore.hasReviewsKey
+        guard hasReviewsKey else {
+            analyticsError = AnalyticsError.noKey
+            return
+        }
+        guard !isLoadingAnalytics else { return }
+
+        for appleID in reviewableAppleIDs {
+            if let cached = analyticsStore.load(appleID) { engagement[appleID] = cached }
+        }
+
+        let outstanding = reviewableAppleIDs.filter { force || analyticsStore.needsFetch($0) }
+        guard !outstanding.isEmpty else {
+            analyticsError = nil
+            return
+        }
+
+        isLoadingAnalytics = true
+        analyticsError = nil
+        let deadline = DispatchTime.now() + .seconds(120 + outstanding.count * 60)
+        DispatchQueue.main.asyncAfter(deadline: deadline) { [weak self] in
+            self?.isLoadingAnalytics = false
+        }
+        fetchAnalytics(outstanding, index: 0)
+    }
+
+    private func fetchAnalytics(_ appleIDs: [String], index: Int) {
+        guard index < appleIDs.count else {
+            isLoadingAnalytics = false
+            return
+        }
+        let appleID = appleIDs[index]
+        analyticsProvider.engagement(forApp: appleID) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let days):
+                    self.engagement[appleID] = self.analyticsStore.merge(days, for: appleID)
+                case .failure(let error):
+                    // "Not ready yet" is per app — one app awaiting its first report shouldn't stop
+                    // the others. Anything else is a key or network problem and stops the run.
+                    if case AnalyticsError.notReadyYet = error {
+                        if self.analyticsError == nil { self.analyticsError = error }
+                    } else {
+                        self.analyticsError = error
+                        self.isLoadingAnalytics = false
+                        return
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    self.fetchAnalytics(appleIDs, index: index + 1)
+                }
+            }
         }
     }
 

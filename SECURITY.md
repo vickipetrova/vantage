@@ -79,7 +79,7 @@ removes every value from the Keychain, both keys; **Remove reviews key** removes
 
 ## Where it goes
 
-Four hosts. That is the entire network surface of this application.
+Five hosts. That is the entire network surface of this application.
 
 ```
 GET https://api.appstoreconnect.apple.com/v1/salesReports          (your reports)
@@ -88,17 +88,39 @@ GET https://api.appstoreconnect.apple.com/v1/apps/…/customerReviews (reviews, 
 POST/DELETE …/v1/customerReviewResponses…                          (only if you enable replying)
 GET https://itunes.apple.com/lookup?id=…&entity=software           (app icons)
 GET https://*.mzstatic.com/…                                       (the icon image itself)
+GET https://*.amazonaws.com/…                                      (analytics report files)
 ```
 
-The first two carry the app's whole purpose. The last two exist only to draw an app's icon beside
-its row, and they were added in v0.2 — v0.1 really did talk to two hosts and nothing else.
+The first two carry the app's whole purpose. Two more exist only to draw an app's icon beside its
+row, and the fifth only if you open Analytics — v0.1 really did talk to two hosts and nothing else.
 
 **Why a third and fourth host for something so small:** the App Store Connect API has no icon. There
 is no artwork field on `/v1/apps/{id}`, and no endpoint that returns one. The public storefront
 lookup is the only source, and it answers on `itunes.apple.com` with a URL pointing at
 `*.mzstatic.com`.
 
-**What those two requests reveal:** the numeric Apple ID of an app you publish, to Apple,
+### The one host that isn't Apple's
+
+Analytics report files are handed over as **pre-signed AWS S3 URLs**, because that is how Apple
+serves them. It is the only destination in this application that isn't Apple or the European Central
+Bank, and it is the only one that **cannot be named in advance** — the bucket and the region vary,
+so the tightest honest constraint is `https` on a host under `.amazonaws.com`, and that is what the
+code enforces.
+
+What protects you there:
+
+- **The download carries no credential.** It goes out on a separate `URLSession` configured with no
+  additional headers at all, so there is no path by which your bearer token could reach a host
+  outside Apple's estate. The URL is pre-signed; it needs nothing from us.
+- **The URL comes from Apple**, over an authenticated connection to `api.appstoreconnect.apple.com`,
+  and expires five minutes after Apple issues it.
+- **The bytes are checked** against the MD5 Apple published for them before anything is parsed.
+- **It only ever happens if you added a reviews key and opened the Analytics section.** Nothing
+  fetches from this host in the background.
+
+`docs/ANALYTICS_API.md` explains the whole lifecycle and why it looks like this.
+
+**What the icon requests reveal:** the numeric Apple ID of an app you publish, to Apple,
 unauthenticated. No token, no vendor number, no app names, no sales figures, no cookies. It is byte
 for byte the request the App Store website makes when anyone anywhere looks at your app's page, and
 it carries nothing that identifies you as the caller. Icons are cached on disk after the first fetch,
@@ -139,9 +161,13 @@ sent anywhere** — they travel from Apple to your Mac and stop there.
 
 `~/Library/Application Support/Vantage/` holds one JSON file per day: the parsed totals for that
 date. Daily reports are immutable once published, so a cached day is never re-fetched. Alongside it,
-`icons/` holds one image per app — public store artwork, nothing derived from your account — and
-`reviews/` holds one file per app of the review text shown in the panel. Removing the reviews key
-deletes `reviews/`.
+`icons/` holds one image per app — public store artwork, nothing derived from your account —
+`reviews/` holds one file per app of the review text shown in the panel, and `analytics/` holds the
+impression and page-view counts. Removing the reviews key deletes both `reviews/` and `analytics/`,
+because that key is the only reason either was readable.
+
+`analytics/` is the only cache Vantage cannot rebuild: Apple keeps analytics report instances for 35
+days and no longer, so anything older there exists in that file and nowhere else.
 
 Those files contain your own sales numbers — app names, unit counts and proceeds. They're readable
 by anything running as your user, exactly like any other app's Application Support folder. They
@@ -170,6 +196,8 @@ The parts worth auditing, in the order they matter:
 | `Sources/VantageCore/ASCReviewsClient.swift` | That the reviews key is read-only and never used for sales |
 | `Sources/VantageCore/ASCReviewsWriter.swift` | The only code that can publish, and that it isn't built unless you asked for it |
 | `Sources/VantageCore/ReplyDraft.swift` | That publishing without confirming is un-expressible, not merely discouraged |
+| `Sources/VantageCore/Analytics.swift` | The S3 host check — the one destination that isn't Apple's |
+| `Sources/VantageCore/ASCAnalyticsClient.swift` | That the download session carries no credential, and that bytes are checksummed |
 
 Two habits in the source worth knowing about, because they're the kind of thing that gets undone by
 accident:
