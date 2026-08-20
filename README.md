@@ -40,8 +40,12 @@ caches that day on disk. Daily reports are immutable once published, so **a day 
 once, ever** — and Apple deletes them after a year, which makes that cache the only copy.
 
 Proceeds arrive in whatever currencies Apple pays you in. They're converted to your display currency
-at the European Central Bank's daily reference rates — the only other request the app makes, and one
-that carries nothing identifying.
+at the European Central Bank's daily reference rates, in a request that carries nothing identifying.
+
+The only other requests are for app icons, which the App Store Connect API doesn't provide — those
+go to Apple's public storefront lookup and send nothing but the numeric Apple ID of an app you
+publish. Icons are cached after the first fetch. See [SECURITY.md](SECURITY.md) for all four hosts
+and what each one carries.
 
 Your numbers are never sent anywhere. There is no server behind this app.
 

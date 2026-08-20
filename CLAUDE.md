@@ -42,17 +42,31 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/FX.swift` | ECB rates fetch, parse and conversion |
 | `Sources/VantageCore/KeychainStore.swift` | Credential storage |
 | `Sources/VantageCore/Prefs.swift` | UserDefaults-backed preferences |
-| `Sources/VantageCore/Format.swift` | Currency, unit counts, dates, menu-width wrapping |
-| `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on both hosts |
-| `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → menu, rates, poll timer, wake |
-| `Sources/Vantage/MenuController.swift` | Status item: title, dropdown, Metrics submenu |
+| `Sources/VantageCore/Format.swift` | Currency, unit counts, dates and spans |
+| `Sources/VantageCore/Money.swift` | Per-currency proceeds → one printable figure, honestly |
+| `Sources/VantageCore/OverviewModel.swift` | Everything the Overview section shows, per range |
+| `Sources/VantageCore/Trend.swift` | Chart series: gaps, normalization, negatives |
+| `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
+| `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on every host |
+| `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → panel, rates, poll timer, wake |
+| `Sources/Vantage/StatusItemController.swift` | Status item: the title, and left/right click |
+| `Sources/Vantage/Panel/PanelWindow.swift` | The non-activating `NSPanel` |
+| `Sources/Vantage/Panel/PanelController.swift` | Anchoring, dismissal, size animation, backdrop |
+| `Sources/Vantage/Panel/PanelModel.swift` | What the panel renders; the views read only this |
+| `Sources/Vantage/Panel/OverviewView.swift` | The Overview section |
+| `Sources/Vantage/Panel/TrendChart.swift` | The chart, drawn with `Path` |
 | `Sources/Vantage/SettingsWindow.swift` | Credentials and preferences, programmatic AppKit |
 | `Sources/Vantage/MainMenu.swift` | The Edit menu — without it ⌘V doesn't work anywhere |
 | `Sources/Vantage/Notifier.swift` | The morning notification |
 | `Sources/Vantage/LaunchAtLogin.swift` | `SMAppService` proxy |
 
-`MenuController` renders `[DaySales]` and a rate table. No App Store Connect strings in it — that's
-what makes a second `SalesProvider` (RevenueCat, eventually) one new file.
+`PanelModel` is handed `[DaySales]` and a rate table; the SwiftUI views read it and compute nothing.
+No App Store Connect strings in either — that's what makes a second `SalesProvider` (RevenueCat,
+eventually) one new file.
+
+**The views are dumb on purpose.** Every figure on screen is built by a `VantageCore` type —
+`Money`, `OverviewModel`, `Trend` — so `swift test` covers it. A calculation that creeps into a
+`View` is a calculation nothing can test; put it in Core and pass the result in.
 
 ## Hard rules
 
@@ -65,7 +79,11 @@ what makes a second `SalesProvider` (RevenueCat, eventually) one new file.
 3. **Money is `Decimal`.** Never `Double`, not even briefly, not even for a sort key.
 4. **All TSV parsing degrades gracefully.** A malformed row is skipped and counted in
    `DaySales.skippedRows`. Unknown product types count toward proceeds, never toward downloads.
-5. **Two network destinations**, enforced by `NoRedirects` rather than merely documented.
+5. **Four network destinations**, enforced by `NoRedirects` rather than merely documented:
+   App Store Connect, the ECB, and — since v0.2, for app icons only — `itunes.apple.com` and
+   `*.mzstatic.com`. The icon lookup is the one place a response body chooses the next URL, so that
+   URL must be `https` before it's fetched. Adding a fifth means changing `SECURITY.md`, which
+   states all four and what each carries.
 6. **`build.sh` signs ad-hoc only.** It must never handle a Developer ID or notarization
    credentials. Releasing is a manual maintainer step — see `docs/RELEASING.md`.
 
@@ -122,6 +140,28 @@ Two things here that were fixed the hard way and are easy to undo:
 - **Every path out of the file picker reports something.** Cancelled, unreadable, wrong file. A
   picker that appears to do nothing is indistinguishable from a broken button.
 
+## The panel
+
+`PanelWindow` is a **non-activating** `NSPanel`, not an `NSPopover`. A popover in an `LSUIElement`
+app can't hold first responder for typing without `NSApp.activate(ignoringOtherApps:)`, which makes
+Vantage frontmost just to read a number — unacceptable, and fatal for the review reply composer
+planned in v0.2. `.nonactivatingPanel` plus `canBecomeKey` takes keyboard without activating. The
+cost is that anchoring, click-outside dismissal and Esc are hand-written in `PanelController`.
+
+Two things there that were found the hard way:
+
+- **`window.level` must not be `.popUpMenu`.** At that level the window server stops applying
+  behind-window backdrop filters, so an `NSVisualEffectView` configured perfectly correctly renders
+  as a flat opaque panel — every property reads right in the debugger and only the pixels are wrong.
+  `.statusBar` is both correct semantically and below that threshold.
+- **Round an `NSVisualEffectView` with `maskImage`, never `masksToBounds`.** Behind-window blur is
+  composited outside the layer tree; a layer mask clips the view and silently discards the material.
+
+On macOS 26 the backdrop is `NSGlassEffectView` (`.regular`) — the system glass widgets and menus
+use, and nothing in the legacy material list resembles it. Below 26 it falls back to
+`NSVisualEffectView`/`.popover`. **The fallback path can't be seen on a 26 machine; check it on an
+older Mac before tagging.**
+
 ## Known constraint: notifications
 
 macOS refuses notification registration for ad-hoc signed bundles — `requestAuthorization` returns
@@ -151,15 +191,20 @@ cache is untouched — and note that `NSTemporaryDirectory()` is the per-user fo
   It should be refetched into a valid day, not reported as an error.
 - **No credentials** — Settings opens by itself at launch.
 
-Reading the menu without screenshots:
+**Reading the UI without screenshots no longer works.** The v0.1 recipe below queried the status
+item's attached menu — but the status item has no menu attached except during a right click (see
+`StatusItemController.showMenu`), so `menu bar item 1` isn't there to query, and an accessory app's
+panel doesn't appear in System Events' window list either.
 
 ```bash
+# v0.1 only. Returns "Can't get menu bar 0 of process Vantage" against v0.2.
 osascript -e 'tell application "System Events" to tell process "Vantage" \
   to get name of every menu item of menu 1 of menu bar item 1 of menu bar (count of menu bars)'
 ```
 
-`(count of menu bars)` matters: once the app is frontmost it has two, and the status item is the
-last one, not the first.
+So panel changes are verified by eye. Build, open, look — in both light and dark. What *is* still
+automatable is everything in `VantageCore`, which is why the Overview's arithmetic lives there
+rather than in the view that displays it.
 
 ## Releasing
 
