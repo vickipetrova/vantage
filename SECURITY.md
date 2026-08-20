@@ -4,13 +4,19 @@ Vantage asks you for an App Store Connect API key. That is a real credential, an
 menu bar app off the internet is a reasonable thing to be nervous about. This document is the whole
 story of what happens to it, so you can check the claims against the source.
 
-## What the key can do
+## What the keys can do
 
 An App Store Connect API key's power comes from the **role** you give it when you create it, not
-from the app that holds it. Vantage needs exactly one thing: read-only access to Sales and Trends
-reports.
+from the app that holds it.
 
-**Create the key with the Sales and Reports role. Nothing else.**
+Vantage can hold **two keys, stored separately**, and neither is ever used for the other's work:
+
+| Key | Required? | Role | What it's for |
+|---|---|---|---|
+| Sales | Yes | **Sales and Reports** | Downloading your daily sales reports |
+| Reviews | No | **App Manager** | Reading customer reviews |
+
+**Create the sales key with the Sales and Reports role. Nothing else.**
 
 Such a key can download sales reports for your vendor number. It cannot see your bank details or
 tax forms, cannot change app metadata, cannot submit or remove a build, cannot manage users, and
@@ -20,16 +26,33 @@ An **Admin** key can do all of those. Vantage would never use those abilities an
 create one — if you already have an Admin key lying around, don't reuse it here. Make a second key
 with the Sales and Reports role and give Vantage that one.
 
+### Why reviews need a second key
+
+Apple gates customer reviews behind a different role than sales reports, and no single role covers
+both without being far more powerful than either needs. Giving the sales key a bigger role so that
+one extra feature works would widen what a leaked key could do with your account — so Vantage asks
+for a second key instead, and stores it as its own Keychain items.
+
+**The reviews key is optional.** Leave it blank and Vantage does exactly what v0.1 did; the Reviews
+section says so and offers nothing else. Removing it later (**Settings › Remove reviews key**)
+deletes the cached review text along with it, and leaves sales working.
+
+Vantage's reviews key **only reads**. It never publishes, edits or deletes a reply — the API can do
+all three, and a later version may, but that will be off by default and behind its own explicit
+consent step, because replying requires an Admin key in practice. See `docs/REVIEWS_API.md`, which
+records the contradiction between two of Apple's own documentation pages on this point.
+
 Keys are revocable. If you ever want Vantage to stop having access, revoke the key in App Store
 Connect (Users and Access › Integrations) — that works whether or not you still have the app
 installed, and it does not affect your other keys.
 
-## Where it's stored
+## Where they're stored
 
-Four values, entered once in Settings: Issuer ID, Key ID, the contents of the `.p8` private key
-file, and your Vendor Number.
+Four values for the sales key, entered once in Settings: Issuer ID, Key ID, the contents of the
+`.p8` private key file, and your Vendor Number. Three more if you add a reviews key: Issuer ID,
+Key ID and its own `.p8`. There is no vendor number for reviews — those endpoints don't take one.
 
-All four go into the **macOS Keychain**, under the service `com.vickipetrova.vantage`, through
+All of them go into the **macOS Keychain**, under the service `com.vickipetrova.vantage`, through
 `Security.framework` in-process (`SecItemAdd` / `SecItemCopyMatching`) — not by shelling out to
 `/usr/bin/security`, so no credential ever crosses a pipe or lands in a subprocess's output.
 
@@ -38,8 +61,8 @@ Vantage does not keep the file path, does not re-read the file later, and does n
 exist afterward — you can move it back to your password manager and delete the download.
 
 Nothing else stores credentials. Not `UserDefaults`, not the on-disk report cache, not a log file,
-not a crash report, not an error message shown in the menu. **Settings › Forget credentials**
-removes all four from the Keychain.
+not a crash report, not an error message shown in the panel. **Settings › Forget credentials**
+removes every value from the Keychain, both keys; **Remove reviews key** removes only the second.
 
 ## Where it goes
 
@@ -48,6 +71,7 @@ Four hosts. That is the entire network surface of this application.
 ```
 GET https://api.appstoreconnect.apple.com/v1/salesReports          (your reports)
 GET https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml  (currency rates)
+GET https://api.appstoreconnect.apple.com/v1/apps/…/customerReviews (reviews, if you added a key)
 GET https://itunes.apple.com/lookup?id=…&entity=software           (app icons)
 GET https://*.mzstatic.com/…                                       (the icon image itself)
 ```
@@ -93,7 +117,9 @@ sent anywhere** — they travel from Apple to your Mac and stop there.
 
 `~/Library/Application Support/Vantage/` holds one JSON file per day: the parsed totals for that
 date. Daily reports are immutable once published, so a cached day is never re-fetched. Alongside it,
-`icons/` holds one image per app — public store artwork, nothing derived from your account.
+`icons/` holds one image per app — public store artwork, nothing derived from your account — and
+`reviews/` holds one file per app of the review text shown in the panel. Removing the reviews key
+deletes `reviews/`.
 
 Those files contain your own sales numbers — app names, unit counts and proceeds. They're readable
 by anything running as your user, exactly like any other app's Application Support folder. They
@@ -114,6 +140,8 @@ The parts worth auditing, in the order they matter:
 | `Sources/VantageCore/FX.swift` | The ECB request carries no identifying data |
 | `Sources/VantageCore/NoRedirects.swift` | Nine lines, and the reason "four destinations" is enforceable |
 | `Sources/VantageCore/AppIcons.swift` | The two unauthenticated requests, and that they carry no credential |
+| `Sources/VantageCore/ASCToken.swift` | One JWT implementation for both keys, and the `scope` claim that limits each token to one request |
+| `Sources/VantageCore/ASCReviewsClient.swift` | That the reviews key is read-only and never used for sales |
 
 Two habits in the source worth knowing about, because they're the kind of thing that gets undone by
 accident:

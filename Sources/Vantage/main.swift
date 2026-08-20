@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelModel.onMetricsChanged = { [weak self] in self?.render() }
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
         settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
+        settingsWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
         settingsWindow.testConnection = { [weak self] completion in
             self?.testConnection(completion) }
 

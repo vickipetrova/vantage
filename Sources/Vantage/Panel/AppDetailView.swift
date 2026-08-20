@@ -30,7 +30,7 @@ struct AppDetailView: View {
                             HeadlineCard(headline: headline, windows: detail.summary.windows)
                         }
                         TrendCard(model: model, appleID: appleID)
-                        reviewsPlaceholder
+                        reviews
                         VStack(alignment: .leading, spacing: Theme.Space.tight) {
                             ForEach(detail.summary.footnotes, id: \.self) { Footnote(text: $0) }
                         }
@@ -61,18 +61,39 @@ struct AppDetailView: View {
         }
         .padding(.horizontal, Theme.Space.section)
         .padding(.vertical, Theme.Space.card)
-        .onAppear { model.loadIconIfNeeded(appleID) }
+        .onAppear {
+            model.loadIconIfNeeded(appleID)
+            model.loadReviews()
+        }
     }
 
     // MARK: - Cards
 
-    /// Phase 4 fills this in. Present now so the section's shape is settled before reviews land.
-    private var reviewsPlaceholder: some View {
+    /// This app's reviews, inline. Same cards as the Reviews section, without the app name on each
+    /// one — it would repeat the header on every card.
+    @ViewBuilder
+    private var reviews: some View {
+        let reviews = model.reviews[appleID] ?? []
         VStack(alignment: .leading, spacing: Theme.Space.tight) {
             SectionHeader("Reviews")
-            Footnote(text: "Customer reviews for this app arrive in a later version.")
+            if !model.hasReviewsKey {
+                Footnote(text: "Add a reviews key in Settings to see reviews for this app.")
+            } else if let error = model.reviewsError {
+                Footnote(text: (error as? ReviewsError)?.errorDescription
+                         ?? "Couldn't load reviews.")
+            } else if reviews.isEmpty {
+                Footnote(text: model.isLoadingReviews
+                         ? "Loading reviews…" : "No reviews for this app yet.")
+            } else {
+                ForEach(reviews.prefix(5)) { review in
+                    ReviewCard(review: review, appTitle: nil)
+                }
+                if reviews.count > 5 {
+                    Button("See all \(reviews.count) reviews") { model.navigate(to: .reviews) }
+                        .controlSize(.small)
+                }
+            }
         }
-        .card()
     }
 }
 

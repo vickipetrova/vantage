@@ -40,7 +40,12 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/Schedule.swift` | When to poll, and when a report deserves a notification |
 | `Sources/VantageCore/Metric.swift` | Which product types count as what |
 | `Sources/VantageCore/FX.swift` | ECB rates fetch, parse and conversion |
-| `Sources/VantageCore/KeychainStore.swift` | Credential storage |
+| `Sources/VantageCore/KeychainStore.swift` | Credential storage — two independent keys |
+| `Sources/VantageCore/ASCToken.swift` | The ES256 JWT, shared by both clients |
+| `Sources/VantageCore/Review.swift` | Review models, and JSON:API → `CustomerReview` |
+| `Sources/VantageCore/ReviewsProvider.swift` | The reviews seam, and `ReviewsError` |
+| `Sources/VantageCore/ASCReviewsClient.swift` | Reads reviews. Read-only, by type |
+| `Sources/VantageCore/ReviewStore.swift` | TTL cache of reviews — **not** an archive |
 | `Sources/VantageCore/Prefs.swift` | UserDefaults-backed preferences |
 | `Sources/VantageCore/Format.swift` | Currency, unit counts, dates and spans |
 | `Sources/VantageCore/Money.swift` | Per-currency proceeds → one printable figure, honestly |
@@ -86,6 +91,20 @@ eventually) one new file.
    states all four and what each carries.
 6. **`build.sh` signs ad-hoc only.** It must never handle a Developer ID or notarization
    credentials. Releasing is a manual maintainer step — see `docs/RELEASING.md`.
+
+## Two keys
+
+Vantage holds a **sales key** (required, Sales and Reports role) and an optional **reviews key**
+(App Manager). They are separate Keychain items, separate types, and each client is constructed with
+its own credentials closure — so neither can be used for the other's work by accident.
+
+`docs/REVIEWS_API.md` is the verified reference and records where **two of Apple's own pages
+contradict each other** about who may reply to a review. The short version: replying needs Admin in
+practice, App Manager 403s, and Customer Support can't be assigned to a key at all. **Read it before
+touching `ReviewDecoder` or `ASCReviewsClient`.**
+
+Reviews are **per app** — there is no portfolio endpoint — so a portfolio view is one request per
+app. That's why they're fetched when the section is opened and never from the poll timer.
 
 ## The report format
 

@@ -29,7 +29,7 @@ struct PanelRootView: View {
             case .appDetail(let appleID):
                 AppDetailView(model: model, appleID: appleID)
             case .reviews:
-                PlaceholderView(route: .reviews, model: model)
+                ReviewsView(model: model)
             case .analytics:
                 PlaceholderView(route: .analytics, model: model)
             }

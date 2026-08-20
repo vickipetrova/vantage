@@ -81,6 +81,18 @@ you close the window.
 Everything goes into the macOS Keychain. See [SECURITY.md](SECURITY.md) for exactly what that key
 can access and where it lives.
 
+### Reviews (optional)
+
+Customer reviews need a **second** App Store Connect key. Apple gates them behind a different role
+than sales reports, and giving the sales key a bigger role so one extra feature works would widen
+what a leaked key could do — so Vantage asks for a separate key with the **App Manager** role and
+stores it separately. Add it under **Settings › Reviews key**; leave it blank and Vantage behaves
+exactly as it did without it.
+
+Vantage's reviews key only reads. Replying to a review needs an Admin key in practice, which is a
+much bigger thing to hand an app — see [docs/REVIEWS_API.md](docs/REVIEWS_API.md), which records the
+contradiction between two of Apple's own documentation pages about it.
+
 > [!NOTE]
 > **Setup is a form, not a walkthrough.** It assumes you already know what an Issuer ID is. A guided
 > first-run flow is the top item on the roadmap — see [Onboarding](#onboarding-is-not-there-yet).

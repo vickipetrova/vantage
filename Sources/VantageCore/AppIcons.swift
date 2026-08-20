@@ -61,12 +61,15 @@ public struct AppIconStore {
         self.directory = directory
     }
 
-    /// Apple IDs are digits, but they arrive from a parsed report, so the filename is built from a
-    /// filtered copy rather than trusted — a `../` in that position would write outside the cache.
+    /// Apple IDs are digits, but they arrive from a parsed report, so the value is **validated,
+    /// not sanitized**, before it becomes a filename.
+    ///
+    /// Filtering non-digits out would defeat a `../` while quietly turning "../../123/x" into the
+    /// cache entry for app 123 — one app's icon served for another. Refusing anything that isn't
+    /// wholly digits is the only answer with no wrong outcome.
     private func url(for appleID: String) -> URL? {
-        let safe = appleID.filter { $0.isNumber }
-        guard !safe.isEmpty else { return nil }
-        return directory.appendingPathComponent("\(safe).png")
+        guard !appleID.isEmpty, appleID.allSatisfy({ $0.isNumber }) else { return nil }
+        return directory.appendingPathComponent("\(appleID).png")
     }
 
     public func load(_ appleID: String) -> Data? {
