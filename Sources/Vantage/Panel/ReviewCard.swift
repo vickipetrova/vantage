@@ -3,6 +3,7 @@ import VantageCore
 
 /// One review, and the reply to it if there is one.
 struct ReviewCard: View {
+    @ObservedObject var model: PanelModel
     let review: CustomerReview
     /// Shown on the portfolio-wide list, omitted on an app's own page where it would repeat the
     /// header on every card.
@@ -51,6 +52,25 @@ struct ReviewCard: View {
             .foregroundColor(.secondary)
 
             if let response = review.response { ResponseBlock(response: response) }
+
+            if let draft = model.drafts[review.id] {
+                ReplyComposer(
+                    review: review,
+                    draft: Binding(
+                        get: { draft },
+                        set: { new in model.updateDraft(review.id) { $0 = new } }),
+                    onPublish: { model.publishReply(to: review.id) },
+                    onCancel: { model.cancelReply(to: review.id) })
+                    .padding(.top, 2)
+            } else if model.repliesEnabled {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button(review.response == nil ? "Reply" : "Edit reply") {
+                        model.beginReply(to: review)
+                    }
+                    .controlSize(.small)
+                }
+            }
         }
         .card()
     }

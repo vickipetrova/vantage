@@ -38,6 +38,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     private let reviewsKeyIDField = NSTextField()
     private let chooseReviewsKeyButton = NSButton()
     private let reviewsStatus = NSTextField(labelWithString: "")
+    private let repliesCheckbox = NSButton()
     private var pendingReviewsPrivateKey: String?
 
     /// Called when the reviews key is added or removed, so the panel stops showing a stale state.
@@ -181,6 +182,21 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         reviewsStatus.maximumNumberOfLines = 3
         reviewsStatus.preferredMaxLayoutWidth = 400
         stack.addArrangedSubview(reviewsStatus)
+
+        // The consent step. Off by default and never flipped as a side effect of anything else —
+        // somebody who only wanted to see their reviews must not end up with an app that can
+        // publish under their name.
+        repliesCheckbox.setButtonType(.switch)
+        repliesCheckbox.title = "Enable replying to reviews"
+        repliesCheckbox.target = self
+        repliesCheckbox.action = #selector(repliesToggled)
+        repliesCheckbox.state = Prefs.repliesEnabled ? .on : .off
+        stack.addArrangedSubview(repliesCheckbox)
+        stack.addArrangedSubview(caption(
+            "Requires an Admin key, not the App Manager key above. An Admin key can change "
+            + "pricing, submit and remove builds, manage users, and read your financial reports. "
+            + "Vantage would use it only to publish review replies, and never without asking you "
+            + "to confirm the exact text first. Leave this off unless you want to reply from here."))
 
         // MARK: Display
 
@@ -347,6 +363,11 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             return nil
         }
         return contents
+    }
+
+    @objc private func repliesToggled() {
+        Prefs.repliesEnabled = repliesCheckbox.state == .on
+        onReviewsKeyChanged?()
     }
 
     // MARK: - The reviews key

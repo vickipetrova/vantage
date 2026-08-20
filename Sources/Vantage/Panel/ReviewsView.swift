@@ -100,7 +100,7 @@ struct ReviewsView: View {
                 .card()
         } else {
             ForEach(reviews) { review in
-                ReviewCard(review: review,
+                ReviewCard(model: model, review: review,
                            appTitle: appleID == nil ? model.titleForApp(review.appleID) : nil)
             }
         }

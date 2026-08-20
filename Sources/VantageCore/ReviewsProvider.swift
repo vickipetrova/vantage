@@ -11,6 +11,26 @@ public protocol ReviewsProvider {
                  completion: @escaping (Result<[CustomerReview], Error>) -> Void)
 }
 
+/// Publishing and deleting replies.
+///
+/// **A separate protocol from `ReviewsProvider` on purpose.** A type that can only read cannot be
+/// handed a write by mistake, and a caller that only needs to read can be given something with no
+/// write methods on it at all. The separation costs one protocol and removes a whole class of
+/// accident from a code path that publishes text to the App Store under the developer's name.
+///
+/// Nothing conforms to this until replies are enabled — see `Prefs.repliesEnabled` and the consent
+/// step in Settings. Replying requires an Admin key in practice; see `docs/REVIEWS_API.md`.
+public protocol ReviewsWriter {
+    /// `POST /v1/customerReviewResponses`. Apple's endpoint is create-**or-update** with no
+    /// distinction, so this silently replaces an existing reply. Callers must have confirmed.
+    func publishResponse(reviewID: String, body: String,
+                         completion: @escaping (Result<ReviewResponse, Error>) -> Void)
+
+    /// `DELETE /v1/customerReviewResponses/{id}`.
+    func deleteResponse(responseID: String,
+                        completion: @escaping (Result<Void, Error>) -> Void)
+}
+
 /// Everything that can go wrong fetching reviews, in the words the panel will show.
 ///
 /// Its own type rather than a `SalesError` case. "No reviews key" and "no App Store Connect key" are
