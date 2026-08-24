@@ -32,6 +32,11 @@ chart, can't take a text field and can't navigate, which made it the ceiling for
   contains.
 - **Settings**, rebuilt as three tabs of grouped forms with per-field state, instead of one 860pt
   column.
+- **`vantage-cli`**, a read-only companion built beside the app. Subcommands for a terminal, and an
+  MCP server so Claude, ChatGPT and other agents can ask about your numbers. It holds no credentials
+  and opens no sockets — it reads the cache and nothing else, so an agent pointed at it can reason
+  about your figures and cannot touch your account.
+- **App Store ratings**, from the same lookup that already fetched each app's icon.
 - **A status strip across the top of every section** saying how current the figures are and when
   they last arrived. A failed refresh used to be a grey line at the bottom of one section, which is
   how a three-day-old panel could look like a working one.

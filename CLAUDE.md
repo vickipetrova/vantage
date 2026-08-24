@@ -59,7 +59,10 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/SegmentParser.swift` | Gzipped TSV → `EngagementDay` |
 | `Sources/VantageCore/AnalyticsStore.swift` | Merging archive — Apple keeps instances 35 days |
 | `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
+| `Sources/VantageCore/CacheQuery.swift` | Read-only answers about the cache, for the CLI and MCP |
 | `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on every host |
+| `Sources/VantageCLI/main.swift` | `vantage-cli` — subcommands over `CacheQuery` |
+| `Sources/VantageCLI/MCPServer.swift` | MCP over stdio, newline-delimited JSON-RPC |
 | `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → panel, rates, poll timer, wake |
 | `Sources/Vantage/StatusItemController.swift` | Status item: the title, and left/right click |
 | `Sources/Vantage/Panel/PanelWindow.swift` | The non-activating `NSPanel` |
@@ -111,6 +114,25 @@ eventually) one new file.
    it's an exact host match.
 6. **`build.sh` signs ad-hoc only.** It must never handle a Developer ID or notarization
    credentials. Releasing is a manual maintainer step — see `docs/RELEASING.md`.
+
+## The CLI
+
+`vantage-cli` is a third target, built by `build.sh` beside the app. It exists for people at a
+terminal and for AI agents over MCP (`vantage-cli mcp`).
+
+**It must stay read-only.** It links `VantageCore` and goes through `CacheQuery`, which opens cache
+files and nothing else. Do not give it Keychain access, a `URLSession`, or a write path — an agent
+calls it without asking anyone, and "holds no credentials" is the whole reason that's safe. An
+earlier `status` read `KeychainStore.hasReviewsKey` and hung the binary on a GUI keychain prompt,
+which is what that mistake looks like when you make it.
+
+The target is `VantageCLI` producing a product named `vantage-cli`, **not** `vantage`: macOS
+filesystems are case-insensitive by default, so a `vantage` binary and the app's `Vantage` binary
+are the same path and the link step collides.
+
+MCP's stdio transport is newline-delimited JSON-RPC, so **nothing may be written to stdout that
+isn't a message.** A stray `print` corrupts the stream and the client drops the connection.
+Diagnostics go to stderr.
 
 ## Two keys
 
