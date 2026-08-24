@@ -135,6 +135,35 @@ there's no `LSUIElement`, no bundle identity for login items, and no notificatio
 Download the latest `Vantage.dmg` from [Releases](../../releases), open it, and drag Vantage into
 Applications.
 
+## Reading your numbers from a terminal, or from an AI
+
+`build.sh` also produces `vantage-cli`, a read-only companion to the app.
+
+```bash
+cp build/vantage-cli /usr/local/bin/
+
+vantage-cli status
+vantage-cli sales --range 7d
+vantage-cli apps --json | jq '.[0]'
+vantage-cli reviews --limit 5
+```
+
+It also speaks [MCP](https://modelcontextprotocol.io), so Claude, ChatGPT and anything else that
+does can ask about your App Store numbers directly:
+
+```json
+{ "mcpServers": { "vantage": { "command": "vantage-cli", "args": ["mcp"] } } }
+```
+
+**It reads the cache and nothing else.** No Keychain, no network, no writes — the binary holds no
+credentials and cannot obtain any. An agent pointed at it can reason about your numbers and cannot
+refresh them, publish a review reply, or reach App Store Connect at all. That isn't a rule applied
+at the door; it's a consequence of the only thing it can do, which is read files the app already
+wrote.
+
+The corollary is that it only knows what the app has fetched. If a figure looks stale, `status`
+says how current the cache is — and the app, not the CLI, is what refreshes it.
+
 ## Requirements
 
 - **macOS 13+** (Ventura). Launch at login uses `SMAppService`, which is 13.0 and later.

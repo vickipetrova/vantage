@@ -31,7 +31,14 @@ echo "Building universal binary (arm64 + x86_64)…"
 # the build machine's OS and refuses to launch on older systems despite LSMinimumSystemVersion.
 export MACOSX_DEPLOYMENT_TARGET="$MIN_MACOS"
 swift build -c release --arch arm64 --arch x86_64 --product "$APP_NAME"
-cp "$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/$APP_NAME" "$BIN"
+BIN_PATH="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+cp "$BIN_PATH/$APP_NAME" "$BIN"
+
+# The read-only CLI, for humans and for agents over MCP. Built alongside because it shares
+# VantageCore — a separate build would let the two drift.
+echo "Building vantage-cli…"
+swift build -c release --arch arm64 --arch x86_64 --product vantage-cli
+cp "$BIN_PATH/vantage-cli" "build/vantage-cli"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -85,3 +92,4 @@ fi
 echo
 echo "Run:      open $APP"
 echo "Install:  cp -R $APP /Applications/"
+echo "CLI:      build/vantage-cli status      (install: cp build/vantage-cli /usr/local/bin/)"

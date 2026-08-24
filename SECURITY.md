@@ -190,6 +190,28 @@ decides whether Vantage may publish a review reply at all. That last one is list
 is the only preference with a security consequence; it defaults to off, and turning it on is the
 consent step described above.
 
+## The command-line tool
+
+`vantage-cli` is built from this repository alongside the app, and exists so you — or an AI agent
+over MCP — can read your numbers without opening the panel.
+
+**It is read-only by construction, not by policy.** It links `VantageCore` and calls exactly one
+type, `CacheQuery`, which opens files under `~/Library/Application Support/Vantage` and does nothing
+else. There is no code path in it that reads the Keychain, opens a socket, or writes anything.
+
+That matters most for the MCP case, because an AI agent will call it without asking you first. The
+worst it can do is describe data you already have. It cannot refresh, cannot publish a review reply,
+and cannot reach App Store Connect — and because it holds no credentials, there is nothing in it to
+leak if the agent's output goes somewhere you didn't expect.
+
+One thing to be aware of rather than reassured about: **an agent you point at it will read your
+sales figures, app names, customer reviews and ratings**, and whatever that agent does with them is
+between you and its operator. Vantage sends nothing anywhere; a tool you connect to it might.
+
+An earlier version of `status` reported whether a reviews key was configured. That was removed: it
+made an unsigned binary raise a keychain prompt, and a tool that promises to hold no credentials has
+no business asking about one.
+
 ## Reading this yourself
 
 The parts worth auditing, in the order they matter:
@@ -204,6 +226,7 @@ The parts worth auditing, in the order they matter:
 | `Sources/VantageCore/ASCToken.swift` | One JWT implementation for both keys, and the `scope` claim that limits each token to one request |
 | `Sources/VantageCore/ASCReviewsClient.swift` | That the reviews key is read-only and never used for sales |
 | `Sources/VantageCore/ASCReviewsWriter.swift` | The only code that can publish, and that it isn't built unless you asked for it |
+| `Sources/VantageCore/CacheQuery.swift` | That the CLI and MCP server read files and do nothing else |
 | `Sources/VantageCore/ReplyDraft.swift` | That publishing without confirming is un-expressible, not merely discouraged |
 | `Sources/VantageCore/Analytics.swift` | The S3 host check — the one destination that isn't Apple's |
 | `Sources/VantageCore/ASCAnalyticsClient.swift` | That the download session carries no credential, and that bytes are checksummed |
