@@ -190,22 +190,7 @@ final class OverviewModelTests: XCTestCase {
 
     // MARK: - Windows
 
-    func testWindowsSumProceedsAcrossTheirLength() {
-        var days: [DaySales] = []
-        for offset in 0..<10 {
-            days.append(day(yesterday.adding(days: -offset), units: 1, proceeds: ["USD": 10]))
-        }
-        let model = build(days)
-        XCTAssertEqual(model.windows.count, 2)
-        XCTAssertEqual(model.windows[0].label, "Last 7 days")
-        XCTAssertEqual(model.windows[0].money.sortKey, 70)
-        // Only ten days are cached, so the 30-day window totals what exists rather than padding.
-        XCTAssertEqual(model.windows[1].money.sortKey, 100)
-    }
 
-    func testWindowsAreOmittedWhenThereAreNoDays() {
-        XCTAssertTrue(build([]).windows.isEmpty)
-    }
 
     // MARK: - Range
 
@@ -245,14 +230,6 @@ final class OverviewModelTests: XCTestCase {
         XCTAssertEqual(label, Fmt.span(from: yesterday.adding(days: -6), to: yesterday))
     }
 
-    /// Showing "Last 7 days" beside a headline that already says "Last 7 days" wastes the card's
-    /// most valuable corner on a repeat.
-    func testTrailingWindowsAreTheRangesNotSelected() {
-        XCTAssertEqual(run(tenDays, .yesterday).windows.map(\.label),
-                       ["Last 7 days", "Last 30 days"])
-        XCTAssertEqual(run(tenDays, .week).windows.map(\.label), ["Yesterday", "Last 30 days"])
-        XCTAssertEqual(run(tenDays, .month).windows.map(\.label), ["Yesterday", "Last 7 days"])
-    }
 
     /// A day against a day is weekday-versus-weekend noise; a week against a week isn't.
     func testWeekAndMonthCompareAgainstThePrecedingWindow() {
@@ -326,15 +303,6 @@ final class OverviewModelTests: XCTestCase {
         XCTAssertEqual(week.headline?.money.sortKey, 20)
     }
 
-    func testTheWindowCardsAreDateScopedToo() {
-        var days = [day(yesterday, units: 1, proceeds: ["USD": 10])]
-        for offset in 9...14 {
-            days.append(day(yesterday.adding(days: -offset), units: 100,
-                            proceeds: ["USD": 1000]))
-        }
-        let sevenDayCard = run(days, .yesterday).windows.first { $0.label == "Last 7 days" }
-        XCTAssertEqual(sevenDayCard?.money.sortKey, 10)
-    }
 
     /// A range that isn't fully cached says so, rather than reading as a quiet week.
     func testAPartlyCachedRangeReportsItsCoverage() {

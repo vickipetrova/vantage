@@ -184,68 +184,57 @@ struct RangePicker: View {
 
 struct HeadlineCard: View {
     let headline: OverviewModel.Headline
-    /// The 7- and 30-day totals, alongside rather than below: they're context for the headline
-    /// figure, and a full-width card each gave them more weight than yesterday itself.
-    let windows: [OverviewModel.WindowTotal]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.tight) {
-            HStack(alignment: .top, spacing: Theme.Space.row) {
-                primary
+        VStack(alignment: .leading, spacing: Theme.Space.card) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(headline.title.uppercased())
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .tracking(0.6)
                 Spacer(minLength: Theme.Space.tight)
-                VStack(alignment: .trailing, spacing: Theme.Space.row) {
-                    Text(headline.dateLabel)
+                Text(headline.dateLabel)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // Side by side, because the comparison people actually make is what customers paid
+            // against what reached them — and two figures in a column read as a list, not a pair.
+            HStack(alignment: .top, spacing: Theme.Space.section) {
+                Figure(value: headline.money.headline, label: "Proceeds", isPrimary: true)
+                if let sales = headline.sales {
+                    Figure(value: sales.headline, label: "Sales", isPrimary: false)
+                }
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                // Spelled out. "89↓" is compact and means nothing until someone tells you what the
+                // arrow is; the menu bar has an excuse for shorthand and a card this size doesn't.
+                Text("\(Fmt.downloads(headline.units)) \(headline.units == 1 ? "download" : "downloads")")
+                    .font(.system(size: 13, weight: .medium))
+                    .monospacedDigit()
+                if let comparison = headline.comparison {
+                    Text(comparison)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    ForEach(windows) { WindowDetail(window: $0) }
                 }
-                .fixedSize(horizontal: true, vertical: false)
             }
+
             notes
         }
         .card()
     }
 
-    private var primary: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.tight) {
-            Text(headline.title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.secondary)
-                .tracking(0.6)
-
-            Text(headline.money.headline)
-                .font(.system(size: 24, weight: .semibold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(headline.unitsLabel)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.secondary)
-                .monospacedDigit()
-
-            if let coverage = headline.coverage {
-                Text(coverage)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            if let comparison = headline.comparison {
-                Text(comparison)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    /// Anything qualifying the figure — a guessed zero, a currency with no rate. Full width, under
-    /// both columns, because these are about the card rather than about either side of it.
+    /// Anything qualifying the figures — a guessed zero, a range that isn't fully cached, money in
+    /// a currency nothing can price.
     @ViewBuilder
     private var notes: some View {
-        if headline.assumedZeroNote != nil || !headline.money.notes.isEmpty {
+        let lines = [headline.coverage, headline.assumedZeroNote].compactMap { $0 }
+            + headline.money.notes
+        if !lines.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                if let note = headline.assumedZeroNote {
-                    Text(note)
-                }
-                ForEach(headline.money.notes, id: \.self) { Text($0) }
+                ForEach(lines, id: \.self) { Text($0) }
             }
             .font(.caption)
             .foregroundColor(.secondary)
@@ -255,24 +244,25 @@ struct HeadlineCard: View {
     }
 }
 
-/// One window's total, sized as a detail rather than as a headline.
-struct WindowDetail: View {
-    let window: OverviewModel.WindowTotal
+/// One money figure with its name under it.
+private struct Figure: View {
+    let value: String
+    let label: String
+    let isPrimary: Bool
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 0) {
-            Text(window.label.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.secondary)
-                .tracking(0.4)
-            Text(window.money.headline)
-                .font(.system(size: 12, weight: .semibold))
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value)
+                .font(.system(size: isPrimary ? 24 : 20,
+                              weight: isPrimary ? .semibold : .regular))
+                .foregroundColor(isPrimary ? .primary : .secondary)
                 .monospacedDigit()
                 .lineLimit(1)
-            Text(window.unitsLabel)
-                .font(.system(size: 10))
+                .minimumScaleFactor(0.5)
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(.secondary)
-                .monospacedDigit()
+                .tracking(0.5)
         }
     }
 }

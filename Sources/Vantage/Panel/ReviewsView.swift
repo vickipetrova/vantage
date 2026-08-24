@@ -131,8 +131,8 @@ private struct NoReviewsKeyCard: View {
             Text("Reviews need their own key")
                 .font(.system(size: 13, weight: .semibold))
             Text("The Sales and Reports key Vantage already has can't read reviews — Apple gates "
-                 + "them behind a different role. Add a second App Store Connect key with at least "
-                 + "the App Manager role.")
+                 + "them behind a different role. Add a second key with at least the App Manager "
+                 + "role under Settings › Reviews & Analytics. The same key powers Analytics.")
                 .font(.callout)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

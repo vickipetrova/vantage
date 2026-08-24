@@ -117,6 +117,23 @@ final class AnalyticsDecodingTests: XCTestCase {
         XCTAssertNil(AnalyticsDecoder.request(from: data("{}")))
     }
 
+    // MARK: - What stops a whole run
+
+    /// "Not ready yet" is the normal answer for most apps just after analytics is switched on, so
+    /// treating it as fatal would mean nobody ever saw any analytics at all.
+    func testNotReadyYetDoesNotStopTheRun() {
+        XCTAssertFalse(AnalyticsError.notReadyYet.stopsTheRun)
+        XCTAssertFalse(AnalyticsError.badResponse.stopsTheRun)
+        XCTAssertFalse(AnalyticsError.corruptSegment.stopsTheRun)
+    }
+
+    func testAKeyOrRoleProblemStopsTheRun() {
+        XCTAssertTrue(AnalyticsError.noKey.stopsTheRun)
+        XCTAssertTrue(AnalyticsError.notAllowedToRequest(detail: nil).stopsTheRun)
+        XCTAssertTrue(AnalyticsError.rateLimited.stopsTheRun)
+        XCTAssertTrue(AnalyticsError.network.stopsTheRun)
+    }
+
     // MARK: - Checksums
 
     func testAMatchingChecksumPasses() {

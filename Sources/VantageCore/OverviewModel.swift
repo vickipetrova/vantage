@@ -53,6 +53,9 @@ public struct OverviewModel: Equatable {
         /// enough to be worth naming the dates every time.
         public let dateLabel: String
         public let money: MoneyText
+        /// Gross customer spend for the same range. `nil` when no cached day in it was read by a
+        /// parser that knew about gross — showing zero would claim the range earned nothing.
+        public let sales: MoneyText?
         public let units: Decimal
         public let unitsLabel: String
         /// `nil` when there's no prior window to compare against.
@@ -73,18 +76,10 @@ public struct OverviewModel: Equatable {
         public var id: String { appleID }
     }
 
-    public struct WindowTotal: Equatable, Identifiable {
-        public let label: String
-        public let money: MoneyText
-        public let unitsLabel: String
-        public var id: String { label }
-    }
-
     public let headline: Headline?
     /// Ranked by converted proceeds, descending. Not truncated — the panel scrolls, so the v0.1
     /// "+n more" row has nothing left to hide.
     public let apps: [AppRow]
-    public let windows: [WindowTotal]
     /// Context about the numbers: which report, when fetched, how money was converted.
     public let footnotes: [String]
     /// Things that went wrong but didn't stop the numbers being shown.
@@ -119,7 +114,7 @@ public struct OverviewModel: Equatable {
             let message = error.map { ($0 as? SalesError)?.errorDescription
                 ?? "Something went wrong." }
             return OverviewModel(
-                headline: nil, apps: [], windows: [], footnotes: [], warnings: [],
+                headline: nil, apps: [], footnotes: [], warnings: [],
                 emptyMessage: message ?? "Loading…",
                 checkedAt: error == nil ? nil : "Checked \(Fmt.clock(now))")
         }
@@ -137,10 +132,16 @@ public struct OverviewModel: Equatable {
         let units = Metric.units(in: window, metrics: metrics)
         let total = money(sum(window))
 
+        // Only if some day in the range was actually read for it. A range of days parsed before
+        // gross existed has no gross, and a zero there would read as "nobody bought anything".
+        let knowsSales = window.contains { $0.parserVersion >= 1 }
+        let grossTotal = knowsSales ? money(sumSales(window)) : nil
+
         let headline = Headline(
             title: range.label,
             dateLabel: Fmt.span(from: start, to: end),
             money: total,
+            sales: grossTotal,
             units: units,
             unitsLabel: Fmt.downloadsWithArrow(units),
             comparison: comparison(range: range, days: days, end: end, units: units,
@@ -174,19 +175,6 @@ public struct OverviewModel: Equatable {
             return leftKey == rightKey ? left.title < right.title : leftKey > rightKey
         }
 
-        // MARK: Windows
-
-        // The ranges the headline *isn't* showing. Repeating the selected one beside itself would
-        // spend the card's most valuable corner saying the same number twice.
-        let windows = OverviewRange.allCases.filter { $0 != range }.compactMap { other -> WindowTotal? in
-            let otherStart = end.adding(days: -(other.days - 1))
-            let otherWindow = days.filter { $0.date >= otherStart && $0.date <= end }
-            guard !otherWindow.isEmpty else { return nil }
-            let otherUnits = Metric.units(in: otherWindow, metrics: metrics)
-            return WindowTotal(label: other.label, money: money(sum(otherWindow)),
-                               unitsLabel: Fmt.downloadsWithArrow(otherUnits))
-        }
-
         // MARK: Footnotes
 
         var footnotes = ["Report for \(Fmt.reportDate(latest.date))"
@@ -218,7 +206,7 @@ public struct OverviewModel: Equatable {
             warnings.append("\(skipped) unreadable row\(skipped == 1 ? "" : "s") skipped")
         }
 
-        return OverviewModel(headline: headline, apps: apps, windows: windows,
+        return OverviewModel(headline: headline, apps: apps,
                              footnotes: footnotes, warnings: warnings,
                              emptyMessage: nil, checkedAt: nil)
     }
@@ -231,6 +219,15 @@ public struct OverviewModel: Equatable {
         var totals: [String: Decimal] = [:]
         for day in days {
             for (currency, amount) in day.proceeds { totals[currency, default: 0] += amount }
+        }
+        return totals
+    }
+
+    /// Gross customer spend across several days, in the currencies customers paid in.
+    private static func sumSales(_ days: [DaySales]) -> [String: Decimal] {
+        var totals: [String: Decimal] = [:]
+        for day in days {
+            for (currency, amount) in day.sales { totals[currency, default: 0] += amount }
         }
         return totals
     }

@@ -142,7 +142,13 @@ final class PanelModel: ObservableObject {
         var seen: Set<String> = []
         var ordered: [String] = []
         for day in days {
-            for app in day.apps where !seen.contains(app.appleID) {
+            // Numeric only. A row keyed by SKU is an in-app purchase group whose app sold nothing
+            // that day (see `AppIdentity`) — it has no Apple ID, so it can have no reviews and no
+            // analytics, and asking about it can only fail.
+            for app in day.apps
+            where !seen.contains(app.appleID)
+                && !app.appleID.isEmpty
+                && app.appleID.allSatisfy(\.isNumber) {
                 seen.insert(app.appleID)
                 ordered.append(app.appleID)
             }
@@ -216,10 +222,14 @@ final class PanelModel: ObservableObject {
                     self.reviewStore.save(reviews, for: appleID)
                 case .failure(let error):
                     // A key that can't read one app can't read any of them, so stop rather than
-                    // fail thirty times with the same message.
+                    // fail thirty times with the same message. But a problem with *one* app's data
+                    // says nothing about the others, and stopping there once cost a user every
+                    // review they had.
                     self.reviewsError = error
-                    self.isLoadingReviews = false
-                    return
+                    if (error as? ReviewsError)?.stopsTheRun ?? true {
+                        self.isLoadingReviews = false
+                        return
+                    }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     self.fetchReviews(appleIDs, index: index + 1)
@@ -316,11 +326,10 @@ final class PanelModel: ObservableObject {
                 case .success(let days):
                     self.engagement[appleID] = self.analyticsStore.merge(days, for: appleID)
                 case .failure(let error):
-                    // "Not ready yet" is per app — one app awaiting its first report shouldn't stop
-                    // the others. Anything else is a key or network problem and stops the run.
-                    if case AnalyticsError.notReadyYet = error {
-                        if self.analyticsError == nil { self.analyticsError = error }
-                    } else {
+                    // One app's problem shouldn't stop the others — "not ready yet" in particular
+                    // is the normal answer for most apps just after analytics is switched on.
+                    if self.analyticsError == nil { self.analyticsError = error }
+                    if (error as? AnalyticsError)?.stopsTheRun ?? true {
                         self.analyticsError = error
                         self.isLoadingAnalytics = false
                         return

@@ -40,8 +40,11 @@ final class BackfillTests: XCTestCase {
     }
 
     private func day(_ date: ReportDate, downloads: Decimal = 10) -> DaySales {
+        // Current parser version: these tests are about *what gets requested*, and a day read by
+        // an older parser is legitimately requested again — that rule has its own tests.
         DaySales(date: date, origin: .observed, downloads: downloads,
-                 proceeds: ["USD": 1], apps: [], fetchedAt: Date())
+                 proceeds: ["USD": 1], apps: [], fetchedAt: Date(),
+                 parserVersion: ReportParser.version)
     }
 
     @discardableResult

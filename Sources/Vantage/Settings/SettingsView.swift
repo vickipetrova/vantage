@@ -16,7 +16,7 @@ struct SettingsView: View {
             ConnectionTab(model: model)
                 .tabItem { Label("App Store Connect", systemImage: "key") }
             ReviewsTab(model: model)
-                .tabItem { Label("Reviews", systemImage: "star.bubble") }
+                .tabItem { Label("Reviews & Analytics", systemImage: "star.bubble") }
             GeneralTab(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
         }
@@ -117,12 +117,16 @@ private struct ReviewsTab: View {
                 }
                 StatusLine(status: model.reviewsStatus)
             } header: {
-                Text("Reviews key — optional")
+                Text("Reviews & Analytics key — optional")
             } footer: {
-                Text("Reviews need a second key. The Sales and Reports key can't read them — Apple "
-                     + "gates reviews behind a different role — and giving that key a bigger role "
-                     + "would widen what it could do with your sales data. Create a separate key "
-                     + "with the App Manager role, or leave this blank if you only want sales.")
+                Text("One key powers both the Reviews and Analytics sections. The Sales and "
+                     + "Reports key above can't read either — Apple gates them behind different "
+                     + "roles — and giving that key a bigger role would widen what it could do "
+                     + "with your sales data.\n\n"
+                     + "App Manager is enough to read reviews. Analytics needs Admin, because "
+                     + "Apple requires an Admin key to start generating a report — and its first "
+                     + "report arrives 24 to 48 hours later. Leave this blank if you only want "
+                     + "sales.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

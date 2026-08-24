@@ -60,8 +60,9 @@ struct AnalyticsView: View {
             VStack(alignment: .leading, spacing: Theme.Space.row) {
                 Text("Analytics needs a key")
                     .font(.system(size: 13, weight: .semibold))
-                Text("App Store engagement uses the same key as reviews, and Apple requires an "
-                     + "Admin key to start generating a report. Add one in Settings.")
+                Text("Analytics uses the same key as Reviews — there isn't a separate one. Add it "
+                     + "under Settings › Reviews & Analytics. Apple requires an Admin key to start "
+                     + "generating a report, and takes 24 to 48 hours to produce the first one.")
                     .font(.callout)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -84,19 +85,48 @@ struct AnalyticsView: View {
         }
     }
 
-    /// The first-run state, which lasts a day or two and is not a failure.
+    /// Nothing to show yet — which is two completely different situations, and reading one as the
+    /// other is the difference between "wait a day" and "your key is wrong".
+    @ViewBuilder
     private var waiting: some View {
+        let error = model.analyticsError as? AnalyticsError
+        let isWaiting = error == nil || error?.stopsTheRun == false
+
         VStack(alignment: .leading, spacing: Theme.Space.row) {
-            Text(model.isLoadingAnalytics ? "Checking with App Store Connect…" : "Nothing yet")
-                .font(.system(size: 13, weight: .semibold))
-            Text((model.analyticsError as? AnalyticsError)?.errorDescription
-                 ?? "Apple generates the first analytics report 24 to 48 hours after Vantage asks "
-                 + "for it. Nothing more to do — it will appear on its own.")
+            HStack(spacing: Theme.Space.tight) {
+                Image(systemName: isWaiting ? "clock" : "exclamationmark.triangle.fill")
+                    .foregroundColor(isWaiting ? .secondary : .orange)
+                Text(headline(isWaiting: isWaiting))
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            Text(body(error: error, isWaiting: isWaiting))
                 .font(.callout)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // Only offered where it's the actual fix. A key button under "come back tomorrow"
+            // suggests something is wrong with the key, which is what made this confusing.
+            if !isWaiting {
+                Button("Open Settings…") { model.onSettings?() }
+                    .controlSize(.small)
+            }
         }
         .card()
+    }
+
+    private func headline(isWaiting: Bool) -> String {
+        if model.isLoadingAnalytics { return "Checking with App Store Connect…" }
+        return isWaiting ? "Apple is preparing your first report" : "Analytics couldn't load"
+    }
+
+    private func body(error: AnalyticsError?, isWaiting: Bool) -> String {
+        if isWaiting {
+            return "Vantage has asked Apple to start generating analytics for your apps. Apple "
+                + "takes 24 to 48 hours to produce the first one, and there is nothing else to do "
+                + "— it will appear here on its own. This is not an error."
+        }
+        return error?.errorDescription ?? "Couldn't load analytics."
     }
 
     private var summary: some View {

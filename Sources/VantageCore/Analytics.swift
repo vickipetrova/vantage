@@ -79,6 +79,20 @@ public enum AnalyticsError: LocalizedError, Equatable {
     /// A segment's bytes didn't match the checksum Apple gave for them.
     case corruptSegment
 
+    /// Whether this should stop a whole run rather than skip one app. See `ReviewsError.stopsTheRun`.
+    ///
+    /// `notReadyYet` is explicitly *not* fatal: one app awaiting its first report says nothing about
+    /// the others, and on a portfolio where analytics was just switched on it is the normal answer
+    /// for most of them.
+    public var stopsTheRun: Bool {
+        switch self {
+        case .noKey, .notAllowedToRequest, .rateLimited, .network:
+            return true
+        case .notReadyYet, .http, .badResponse, .corruptSegment:
+            return false
+        }
+    }
+
     public var errorDescription: String? {
         switch self {
         case .noKey:
