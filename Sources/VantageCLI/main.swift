@@ -177,9 +177,16 @@ enum CLI {
       vantage-cli reviews --limit 5
 
     MCP
-      Register it with an agent that speaks MCP, for example in ~/.claude.json:
+      Claude Code:
+        claude mcp add vantage --scope user -- ~/.local/bin/vantage-cli mcp
 
-        { "mcpServers": { "vantage": { "command": "vantage-cli", "args": ["mcp"] } } }
+      Claude Desktop — ~/Library/Application Support/Claude/claude_desktop_config.json,
+      then quit and reopen it:
+        { "mcpServers": { "vantage": {
+            "command": "/Users/YOU/.local/bin/vantage-cli", "args": ["mcp"] } } }
+
+      Use the full path. Apps launched from the Dock don't inherit your shell PATH, so a
+      bare command works in a terminal and silently fails in Claude Desktop.
     """
 }
 

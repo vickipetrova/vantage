@@ -148,20 +148,57 @@ Applications.
 `build.sh` also produces `vantage-cli`, a read-only companion to the app.
 
 ```bash
-cp build/vantage-cli /usr/local/bin/
+mkdir -p ~/.local/bin
+cp build/vantage-cli ~/.local/bin/
 
-vantage-cli status
-vantage-cli sales --range 7d
-vantage-cli apps --json | jq '.[0]'
-vantage-cli reviews --limit 5
+~/.local/bin/vantage-cli status
+~/.local/bin/vantage-cli sales --range 7d
+~/.local/bin/vantage-cli apps --json | jq '.[0]'
+~/.local/bin/vantage-cli reviews --limit 5
 ```
 
-It also speaks [MCP](https://modelcontextprotocol.io), so Claude, ChatGPT and anything else that
-does can ask about your App Store numbers directly:
+`/usr/local/bin` works too and needs `sudo`. Either way, add the directory to your `PATH` if it
+isn't already, and you can drop the prefix.
+
+### Connecting it to an AI
+
+It speaks [MCP](https://modelcontextprotocol.io), so Claude, ChatGPT and anything else that does can
+ask about your App Store numbers directly. Five tools: `get_sales`, `get_apps`, `get_reviews`,
+`get_analytics`, `get_status`.
+
+**Claude Code** — one command:
+
+```bash
+claude mcp add vantage --scope user -- ~/.local/bin/vantage-cli mcp
+claude mcp list        # vantage: … - ✔ Connected
+```
+
+**Claude Desktop** — add to
+`~/Library/Application Support/Claude/claude_desktop_config.json`, keeping whatever is already
+there, then **quit and reopen Claude Desktop**. It reads this file at launch and won't notice a
+change while running.
 
 ```json
-{ "mcpServers": { "vantage": { "command": "vantage-cli", "args": ["mcp"] } } }
+{
+  "mcpServers": {
+    "vantage": {
+      "command": "/Users/YOU/.local/bin/vantage-cli",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
+
+> [!IMPORTANT]
+> **Use the full path, not just `vantage-cli`.** Apps launched from the Dock don't inherit your
+> shell's `PATH`, so a bare command works when you test it in a terminal and silently fails in
+> Claude Desktop — usually as a server that never connects, with nothing obvious to point at.
+
+An MCP server is a **local process the client starts on the same Mac**. If an assistant tells you it
+timed out reaching your machine, that's a different mechanism entirely — this one has no network to
+fail on, and either the client spawns the binary or it doesn't.
+
+### What it can and can't do
 
 **It reads the cache and nothing else.** No Keychain, no network, no writes — the binary holds no
 credentials and cannot obtain any. An agent pointed at it can reason about your numbers and cannot
@@ -169,8 +206,12 @@ refresh them, publish a review reply, or reach App Store Connect at all. That is
 at the door; it's a consequence of the only thing it can do, which is read files the app already
 wrote.
 
-The corollary is that it only knows what the app has fetched. If a figure looks stale, `status`
-says how current the cache is — and the app, not the CLI, is what refreshes it.
+The corollary is that it only knows what the app has fetched. If a figure looks stale, `status` says
+how current the cache is — and the app, not the CLI, is what refreshes it.
+
+The other corollary is worth saying plainly: **an agent you connect will read your sales figures, app
+names, reviews and ratings**, and what it does with them is between you and whoever runs it. Vantage
+sends nothing anywhere; a tool you point at it might.
 
 ## Requirements
 
