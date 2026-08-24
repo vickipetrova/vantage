@@ -32,7 +32,14 @@ struct ReviewsView: View {
             }
             .scrollContentBackground(.hidden)
         }
-        .onAppear { model.loadReviews() }
+        .onAppear {
+            model.loadReviews()
+            // The same lookup that supplies each icon, so the rating costs nothing extra.
+            for id in appleID.map({ [$0] }) ?? model.reviewableAppleIDs {
+                model.loadListingIfNeeded(id)
+                model.loadIconIfNeeded(id)
+            }
+        }
     }
 
     // MARK: - Header
@@ -102,6 +109,7 @@ struct ReviewsView: View {
                      : "No reviews match. Apple only returns reviews written on the App Store.")
                 .card()
         } else {
+            RatingsStrip(model: model, appleID: appleID)
             // A refresh that failed while there is still something cached is a warning above the
             // list, never instead of it. Replacing what somebody is reading with an error card
             // loses the data they came for, and it's still right there in memory.
@@ -116,6 +124,70 @@ struct ReviewsView: View {
                 }
             }
         }
+    }
+}
+
+/// Each app's App Store rating, above its reviews.
+///
+/// The reviews below are the ones people wrote; this is the number everyone else sees. Both come
+/// from Apple, neither is derived from the other, and showing an average computed from the fifty
+/// reviews Vantage happens to have fetched would be a different — and wrong — number.
+private struct RatingsStrip: View {
+    @ObservedObject var model: PanelModel
+    let appleID: String?
+
+    private var ids: [String] {
+        (appleID.map { [$0] } ?? model.reviewableAppleIDs)
+            .filter { model.listings[$0]?.averageRating != nil }
+    }
+
+    var body: some View {
+        if !ids.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Space.tight) {
+                SectionHeader("App Store rating")
+                ForEach(ids, id: \.self) { id in
+                    if let listing = model.listings[id] {
+                        RatingRow(title: model.titleForApp(id),
+                                  icon: model.icons[id],
+                                  listing: listing)
+                    }
+                }
+            }
+            .card()
+        }
+    }
+}
+
+private struct RatingRow: View {
+    let title: String
+    let icon: NSImage?
+    let listing: AppListing
+
+    var body: some View {
+        HStack(spacing: Theme.Space.row) {
+            AppIconView(icon: icon, side: 22)
+            Text(title).lineLimit(1)
+            Spacer(minLength: Theme.Space.tight)
+            if let average = listing.averageRating {
+                // Rounded for the stars, exact beside them — five stars can't show 4.7, and
+                // rounding is the only honest way to draw it, so the number says what it really is.
+                RatingStars(rating: Int(NSDecimalNumber(decimal: average).rounding(
+                    accordingToBehavior: NSDecimalNumberHandler(
+                        roundingMode: .plain, scale: 0, raiseOnExactness: false,
+                        raiseOnOverflow: false, raiseOnUnderflow: false,
+                        raiseOnDivideByZero: false)).intValue))
+                Text(Fmt.rating(average))
+                    .font(.callout)
+                    .monospacedDigit()
+            }
+            if let count = listing.ratingCount {
+                Text("(\(Fmt.downloads(Decimal(count))))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+            }
+        }
+        .font(.callout)
     }
 }
 

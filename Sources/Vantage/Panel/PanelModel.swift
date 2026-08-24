@@ -109,6 +109,20 @@ final class PanelModel: ObservableObject {
     /// including for apps that have no icon, where the answer is a permanent nil.
     private var requestedIcons: Set<String> = []
 
+    /// App Store ratings, keyed by Apple ID. From the same lookup that supplies the icon, so this
+    /// costs no extra request.
+    @Published private(set) var listings: [String: AppListing] = [:]
+    private var requestedListings: Set<String> = []
+
+    func loadListingIfNeeded(_ appleID: String) {
+        guard !requestedListings.contains(appleID) else { return }
+        requestedListings.insert(appleID)
+        iconProvider.listing(for: appleID) { [weak self] listing in
+            guard let listing else { return }
+            DispatchQueue.main.async { self?.listings[appleID] = listing }
+        }
+    }
+
     func loadIconIfNeeded(_ appleID: String) {
         guard icons[appleID] == nil, !requestedIcons.contains(appleID) else { return }
         requestedIcons.insert(appleID)

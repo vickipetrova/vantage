@@ -26,6 +26,11 @@ struct PanelRootView: View {
         // The window's backdrop provides the background. Anything opaque here would cover it and
         // turn the panel into a plain grey box.
         .background(Color.clear)
+        // Clipped to the same radius the backdrop uses. The backdrop shapes *itself*, but nothing
+        // was shaping the SwiftUI drawn on top of it — so the rail's divider, the status strip's
+        // tint and the card fills all ran square into the corners and showed as four hard edges
+        // just inside the rounded ones.
+        .clipShape(RoundedRectangle(cornerRadius: Theme.panelCorner, style: .continuous))
     }
 
     @ViewBuilder

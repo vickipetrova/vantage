@@ -106,6 +106,20 @@ public enum Fmt {
         return formatter
     }()
 
+    /// An App Store rating, to one decimal place. `4.7`.
+    ///
+    /// One decimal because that is how the App Store itself writes it, and because whole stars
+    /// throw away the only thing that moves.
+    public static func rating(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = .current
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        return formatter.string(from: NSDecimalNumber(decimal: value))
+            ?? NSDecimalNumber(decimal: value).stringValue
+    }
+
     /// A rate, to one decimal place. `3.4%`.
     ///
     /// One decimal rather than none: page view rates live in the low single digits, and rounding

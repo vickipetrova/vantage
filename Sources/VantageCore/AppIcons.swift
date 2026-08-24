@@ -13,6 +13,29 @@ import Foundation
 ///
 /// Redirects are refused here exactly as they are everywhere else, so a lookup that tries to send
 /// us somewhere unnamed fails and the row falls back to its placeholder.
+/// What the storefront says about an app: its artwork, and its rating.
+///
+/// Both come out of one lookup response, which is why ratings cost no new request and no new host —
+/// Vantage was already making this call for the icon and throwing the rest away.
+public struct AppListing: Equatable, Codable, Sendable {
+    public let appleID: String
+    public let artworkURL: URL?
+    /// The App Store's own average, 0–5. `nil` for an app with no ratings yet — **not** zero, which
+    /// would read as unanimously terrible rather than as unrated.
+    public let averageRating: Decimal?
+    public let ratingCount: Int?
+    public let fetchedAt: Date
+
+    public init(appleID: String, artworkURL: URL?, averageRating: Decimal?,
+                ratingCount: Int?, fetchedAt: Date) {
+        self.appleID = appleID
+        self.artworkURL = artworkURL
+        self.averageRating = averageRating
+        self.ratingCount = ratingCount
+        self.fetchedAt = fetchedAt
+    }
+}
+
 public enum ITunesLookup {
     public static let host = "itunes.apple.com"
 
@@ -59,6 +82,32 @@ public enum ITunesLookup {
     /// A cap on artwork. A 100pt icon is a few tens of kilobytes; anything past this is not an icon,
     /// and without a limit a hostile or broken response could write until the disk filled.
     static let maxArtworkBytes = 4 * 1024 * 1024
+
+    /// The whole listing, not just the artwork.
+    ///
+    /// Rating fields are optional throughout: an app with no ratings has neither, an app not on the
+    /// store has no result at all, and both are ordinary rather than errors.
+    public static func listing(from data: Data, appleID: String,
+                               fetchedAt: Date = Date()) -> AppListing? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = object["results"] as? [[String: Any]],
+              let first = results.first
+        else { return nil }
+
+        // Apple sends these as JSON numbers, so they arrive as Double. Converted through a string
+        // rather than `Decimal(double:)` — this is the one number in the app that isn't money, but
+        // 4.7 becoming 4.699999999999999 would still look like a bug.
+        let average = (first["averageUserRating"] as? NSNumber)
+            .flatMap { Decimal(string: "\($0.doubleValue)") }
+
+        return AppListing(
+            appleID: appleID,
+            artworkURL: artworkURL(from: data),
+            // A rating of exactly 0 means unrated, not terrible.
+            averageRating: (average ?? 0) > 0 ? average : nil,
+            ratingCount: (first["userRatingCount"] as? NSNumber)?.intValue,
+            fetchedAt: fetchedAt)
+    }
 
     static func lookupURL(appleID: String) -> URL? {
         // Validated all-digits, like every other place an Apple ID leaves this app — here it can't
@@ -115,11 +164,64 @@ public struct AppIconStore {
     }
 }
 
-/// A source of app icons, so the panel doesn't learn where they come from.
+/// The on-disk cache of listings.
+///
+/// A **TTL** cache, unlike the icon bytes beside it: an icon is effectively permanent, but a rating
+/// moves every day, and a stale one presented as current is a number nobody can act on.
+public struct AppListingStore {
+    /// Ratings change slowly and the lookup is free but not weightless. A day is short enough that
+    /// a rating never looks frozen and long enough that opening the panel doesn't re-ask.
+    public static let maxAge: TimeInterval = 24 * 60 * 60
+
+    private let directory: URL
+    private let fileManager = FileManager.default
+
+    public init(directory: URL = ReportStore.defaultDirectory.appendingPathComponent(
+        "listings", isDirectory: true)) {
+        self.directory = directory
+    }
+
+    /// Validated, not sanitized — the same rule as every other store here.
+    private func url(for appleID: String) -> URL? {
+        guard !appleID.isEmpty, appleID.allSatisfy({ $0.isNumber }) else { return nil }
+        return directory.appendingPathComponent("\(appleID).json")
+    }
+
+    public func load(_ appleID: String) -> AppListing? {
+        guard let url = url(for: appleID),
+              let data = try? Data(contentsOf: url),
+              let listing = try? JSONDecoder().decode(AppListing.self, from: data)
+        else { return nil }
+        return listing
+    }
+
+    public func needsFetch(_ appleID: String, now: Date = Date()) -> Bool {
+        guard let listing = load(appleID) else { return true }
+        return now.timeIntervalSince(listing.fetchedAt) > Self.maxAge
+    }
+
+    @discardableResult
+    public func save(_ listing: AppListing) -> Bool {
+        guard let url = url(for: listing.appleID) else { return false }
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try JSONEncoder().encode(listing).write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+}
+
+/// A source of app icons and listings, so the panel doesn't learn where they come from.
 public protocol AppIconProvider {
     /// `nil` means no icon is available — a free-standing fact, not an error. The row draws a
     /// placeholder and says nothing.
     func icon(for appleID: String, completion: @escaping (Data?) -> Void)
+
+    /// The app's storefront listing, including its rating. `nil` for an app that isn't on the
+    /// store — a TestFlight build, or one removed from sale.
+    func listing(for appleID: String, completion: @escaping (AppListing?) -> Void)
 }
 
 public final class ITunesIconClient: AppIconProvider {
@@ -136,8 +238,39 @@ public final class ITunesIconClient: AppIconProvider {
         return URLSession(configuration: config, delegate: NoRedirects.shared, delegateQueue: nil)
     }()
 
-    public init(store: AppIconStore = AppIconStore()) {
+    private let listings: AppListingStore
+
+    public init(store: AppIconStore = AppIconStore(),
+                listings: AppListingStore = AppListingStore()) {
         self.store = store
+        self.listings = listings
+    }
+
+    public func listing(for appleID: String, completion: @escaping (AppListing?) -> Void) {
+        Self.queue.async { [listings] in
+            let cached = listings.load(appleID)
+            // Whatever is cached goes up immediately, stale or not — a rating from yesterday beats
+            // a blank space while a request runs.
+            if let cached, !listings.needsFetch(appleID) {
+                completion(cached)
+                return
+            }
+            guard let url = ITunesLookup.lookupURL(appleID: appleID) else {
+                completion(cached)
+                return
+            }
+            Self.session.dataTask(with: url) { data, response, _ in
+                guard let data,
+                      (response as? HTTPURLResponse)?.statusCode == 200,
+                      let listing = ITunesLookup.listing(from: data, appleID: appleID)
+                else {
+                    completion(cached)
+                    return
+                }
+                listings.save(listing)
+                completion(listing)
+            }.resume()
+        }
     }
 
     /// Magic-number check, so only something that is actually an image is cached.
