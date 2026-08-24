@@ -57,7 +57,8 @@ final class MoneyTests: XCTestCase {
     /// selling only in one of those has a rate table that simply doesn't apply to them, and the
     /// converted total is a true zero standing in front of real revenue.
     func testRatesThatConvertNothingDoNotProduceAConvertedZero() {
-        let text = Money.text(for: ["TWD": 30_000], rates: rates, displayCurrency: "USD")
+        // A currency with no published rate, no peg and no built-in estimate.
+        let text = Money.text(for: ["ZZZ": 30_000], rates: rates, displayCurrency: "USD")
         XCTAssertFalse(text.headline.contains("≈"),
                        "Nothing was converted, so nothing may claim to be: \(text.headline)")
         XCTAssertTrue(text.headline.contains("30,000") || text.headline.contains("30000"),
@@ -67,7 +68,7 @@ final class MoneyTests: XCTestCase {
     }
 
     func testSeveralUnconvertibleCurrenciesFallBackToTheLargestPlusACount() {
-        let text = Money.text(for: ["TWD": 30_000, "VND": 500], rates: rates, displayCurrency: "USD")
+        let text = Money.text(for: ["ZZZ": 30_000, "YYY": 500], rates: rates, displayCurrency: "USD")
         XCTAssertEqual(text.notes, ["+ 1 other currency"])
         XCTAssertFalse(text.isComparable)
     }
@@ -176,9 +177,9 @@ final class MoneyTests: XCTestCase {
 
     /// Same trap on the rates-present-but-inapplicable path.
     func testAnUnconvertibleAmountIsLabelledWithItsOwnCurrency() {
-        let text = Money.text(for: ["TWD": 30_000], rates: rates, displayCurrency: "USD")
+        let text = Money.text(for: ["ZZZ": 30_000], rates: rates, displayCurrency: "USD")
         XCTAssertFalse(text.headline.hasPrefix("$"), text.headline)
-        XCTAssertTrue(text.headline.contains("NT$") || text.headline.contains("TWD"), text.headline)
+        XCTAssertTrue(text.headline.contains("ZZZ"), text.headline)
     }
 
     func testAConvertedFigureIsLabelledInTheDisplayCurrency() {

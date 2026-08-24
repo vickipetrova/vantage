@@ -183,7 +183,7 @@ public enum ReportParser {
         var downloads: Decimal = 0
         var proceeds: [String: Decimal] = [:]
         var apps: [String: (title: String, downloads: Decimal, proceeds: [String: Decimal],
-                            units: [String: Decimal])] = [:]
+                            units: [String: Decimal], sku: String)] = [:]
         var unitsByType: [String: Decimal] = [:]
         var skipped = 0
 
@@ -223,7 +223,10 @@ public enum ReportParser {
 
             guard let owner = owner(of: row) else { return }
             var app = apps[owner.key] ?? (title: owner.title, downloads: 0, proceeds: [:],
-                                          units: [:])
+                                          units: [:], sku: "")
+            // Only an app's own row carries the app's SKU; an In-App Purchase row's SKU is the
+            // purchase's.
+            if row.parentID.isEmpty, !row.sku.isEmpty { app.sku = row.sku }
             // Prefer the title from a download row: In-App Purchase rows put the product ID in the
             // Title column, which is not the app's name.
             if row.isDownload, !row.title.isEmpty { app.title = row.title }
@@ -239,7 +242,7 @@ public enum ReportParser {
             let summaries = apps
                 .map { AppSales(appleID: $0.key, title: $0.value.title,
                                 downloads: $0.value.downloads, proceeds: $0.value.proceeds,
-                                unitsByProductType: $0.value.units) }
+                                unitsByProductType: $0.value.units, sku: $0.value.sku) }
                 // Sorted by Apple ID rather than by money, because sorting by proceeds needs a
                 // display currency and a rate table. The menu sorts; the parser just groups.
                 .sorted { $0.appleID < $1.appleID }

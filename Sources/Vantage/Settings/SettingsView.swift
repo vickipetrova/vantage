@@ -171,6 +171,26 @@ private struct GeneralTab: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if !model.rateRows.isEmpty {
+                Section {
+                    ForEach(model.rateRows) { row in
+                        ManualRateRow(model: model, row: row)
+                    }
+                } header: {
+                    Text("Currencies with no published rate")
+                } footer: {
+                    Text("Apple pays in about 45 currencies; the European Central Bank publishes "
+                         + "rates for 30 of them. AED, SAR and QAR are fixed by their central banks "
+                         + "and convert exactly. The rest float, so Vantage starts from a rough "
+                         + "estimate (\(FXSeed.asOf)) to keep the money in your totals — but an "
+                         + "estimate drifts. Set a real one here and it's used instead, and every "
+                         + "figure it touches says whose number it is.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Section {
                 Toggle("Notify me when a new report lands", isOn: $model.morningNotification)
                 Toggle("Launch at login", isOn: Binding(
@@ -186,6 +206,45 @@ private struct GeneralTab: View {
 }
 
 // MARK: - Pieces
+
+/// A rate the user supplies for a currency nothing publishes one for.
+private struct ManualRateRow: View {
+    @ObservedObject var model: SettingsModel
+    let row: SettingsModel.RateRow
+
+    var body: some View {
+        LabeledContent(row.code) {
+            HStack(spacing: 8) {
+                TextField("per US dollar", text: Binding(
+                    get: { row.text },
+                    set: { model.updateRate(row.code, text: $0) }))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                    // Committed on Return and on losing focus, so a typed rate can't sit
+                    // uncommitted while the panel shows the old figure.
+                    .onSubmit { model.commitRate(row.code) }
+                Button("Set") { model.commitRate(row.code) }
+                    .controlSize(.small)
+                if let setAt = row.setAt {
+                    // A hand-typed rate for a floating currency drifts silently. The date is the
+                    // only thing that makes that visible.
+                    Text("set \(Fmt.relative(setAt))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else if row.isEstimate {
+                    Text("Vantage's estimate")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                } else {
+                    Text("not set")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
 
 /// One identifier field, with what the Keychain currently holds beside it.
 private struct CredentialField: View {

@@ -92,6 +92,64 @@ final class SettingsModel: ObservableObject {
     }
 
     @Published var launchAtLogin = LaunchAtLogin.isEnabled
+
+    // MARK: - Manual rates
+
+    /// Currencies in the cache with no published rate and no peg. Supplied by the app, which is the
+    /// half that knows what's in the cache.
+    var unpricedCurrencies: (() -> [String])?
+
+    /// One row per currency needing a rate, as typed.
+    @Published private(set) var rateRows: [RateRow] = []
+
+    struct RateRow: Identifiable, Equatable {
+        let code: String
+        var text: String
+        var setAt: Date?
+        /// The shown value is Vantage's built-in estimate, not something the user chose.
+        var isEstimate: Bool
+        var id: String { code }
+    }
+
+    private func loadRates() {
+        let stored = Prefs.manualRates
+        let dates = Prefs.manualRateDates
+        // Every currency that needs a rate, plus any the user has already set — so removing an app
+        // doesn't strand a rate somewhere it can't be edited.
+        let needed = Set(unpricedCurrencies?() ?? []).union(stored.keys)
+        rateRows = needed.sorted().map { code in
+            // Pre-filled with the built-in estimate when the user hasn't set one, so the field
+            // shows the number actually in use rather than being blank while a figure depends on it.
+            let value = stored[code] ?? FXSeed.estimate(for: code)
+            return RateRow(code: code,
+                           text: value.map { "\($0)" } ?? "",
+                           setAt: dates[code],
+                           isEstimate: stored[code] == nil && FXSeed.estimate(for: code) != nil)
+        }
+    }
+
+    func updateRate(_ code: String, text: String) {
+        guard let index = rateRows.firstIndex(where: { $0.code == code }) else { return }
+        rateRows[index].text = text
+    }
+
+    /// Commits one row. An empty or unparseable value clears the rate rather than storing zero —
+    /// dividing by zero would turn a total into nonsense.
+    func commitRate(_ code: String) {
+        guard let index = rateRows.firstIndex(where: { $0.code == code }) else { return }
+        let trimmed = rateRows[index].text.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: ",", with: "")
+        let value = Decimal(string: trimmed, locale: Locale(identifier: "en_US_POSIX"))
+        Prefs.setManualRate(value.flatMap { $0 > 0 ? $0 : nil }, for: code)
+        rateRows[index].setAt = Prefs.manualRateDates[code]
+        rateRows[index].isEstimate = Prefs.manualRates[code] == nil
+            && FXSeed.estimate(for: code) != nil
+        if value == nil || value! <= 0 {
+            // Cleared. Falls back to the estimate, so the field shows what's actually in use.
+            rateRows[index].text = FXSeed.estimate(for: code).map { "\($0)" } ?? ""
+        }
+        onPreferencesChanged?()
+    }
     @Published private(set) var launchStatus = Status()
 
     // MARK: - Loading
@@ -106,6 +164,7 @@ final class SettingsModel: ObservableObject {
         morningNotification = Prefs.morningNotification
         repliesEnabled = Prefs.repliesEnabled
         launchAtLogin = LaunchAtLogin.isEnabled
+        loadRates()
         refreshStates()
     }
 

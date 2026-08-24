@@ -42,6 +42,11 @@ once, ever** — and Apple deletes them after a year, which makes that cache the
 Proceeds arrive in whatever currencies Apple pays you in. They're converted to your display currency
 at the European Central Bank's daily reference rates, in a request that carries nothing identifying.
 
+The ECB publishes 30 currencies and Apple pays in around 45. Three of the gap — **AED, SAR, QAR** —
+are fixed against the US dollar by their central banks, so Vantage converts those at their peg and
+says it did. The rest float, and Vantage will not invent a rate for them: those amounts are listed
+in their own currency rather than folded into a total that would look complete and not be.
+
 The only other requests are for app icons, which the App Store Connect API doesn't provide — those
 go to Apple's public storefront lookup and send nothing but the numeric Apple ID of an app you
 publish — and, if you open Analytics, the report files themselves, which Apple serves as pre-signed

@@ -52,11 +52,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
         settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
         settingsWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
+        settingsWindow.unpricedCurrencies = { [weak self] in self?.unpricedCurrencies() ?? [] }
         settingsWindow.testConnection = { [weak self] completion in
             self?.testConnection(completion) }
 
         Notifier.requestAuthorizationIfNeeded()
-        rates = fx.cached()  // Whatever's on disk, so the first render isn't blank.
+        // Whatever's on disk, so the first render isn't blank — with the user's own rates for any
+        // currency nothing publishes one for.
+        rates = fx.cached()?.applying(manualRates: Prefs.manualRates)
 
         // Registered before the credentials guard: a first-launch user who sets up credentials in
         // the window this guard opens would otherwise get no wake refresh for the whole session.
@@ -88,7 +91,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func preferencesChanged() {
         Notifier.requestAuthorizationIfNeeded()
+        // A changed manual rate re-prices everything on screen without refetching anything.
+        rates = rates?.applying(manualRates: Prefs.manualRates)
         render()
+    }
+
+    /// Currencies in the cache with no real rate behind them — no ECB rate, no central-bank peg.
+    ///
+    /// Offered in Settings so the user can supply a rate for exactly the currencies that need one,
+    /// rather than being shown a list of every currency in the world.
+    private func unpricedCurrencies() -> [String] {
+        guard let rates else { return [] }
+        var codes: Set<String> = []
+        for day in store.loadAll(renderWindow) {
+            for (code, amount) in day.proceeds where amount != 0 {
+                // `needsUserRate`, not `canConvert`: a built-in estimate makes a currency
+                // convertible, and that is precisely when a real rate is most worth asking for.
+                if rates.needsUserRate(code) { codes.insert(code.uppercased()) }
+            }
+        }
+        return codes.sorted()
     }
 
     // MARK: - Rendering
@@ -120,10 +142,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard KeychainStore.hasCredentials else {
             statusItemController.showNoCredentials()
             panelModel.showNoCredentials()
+            panelModel.refreshFinished(succeeded: false)
             return
         }
         guard !isFetching else { return }  // Refresh Now during a backfill shouldn't double it.
         isFetching = true
+        panelModel.refreshStarted()
 
         refreshRates { [weak self] in
             guard let self else { return }
@@ -137,6 +161,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }, completion: { error in
                 DispatchQueue.main.async {
                     self.isFetching = false
+                    // A refresh that reached Apple counts as a success even when it added no days:
+                    // "nothing new" is an answer, and the panel needs to say when it last got one.
+                    self.panelModel.refreshFinished(succeeded: error == nil)
                     self.render(error: error)
                     self.reschedule()
                 }
@@ -149,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 // A failed rates fetch is not a failed refresh: sales figures matter more than the
                 // currency they're shown in, and the menu says when conversion is unavailable.
-                if let rates { self?.rates = rates }
+                if let rates { self?.rates = rates.applying(manualRates: Prefs.manualRates) }
                 next()
             }
         }

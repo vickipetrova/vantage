@@ -101,13 +101,24 @@ public struct AppSales: Equatable, Codable, Sendable {
     /// worse than no breakdown.
     public let unitsByProductType: [String: Decimal]
 
+    /// The app's SKU, from the report's own column.
+    ///
+    /// Carried because an In-App Purchase row names its app by **SKU**, not by Apple Identifier —
+    /// so on a day when an app sold no units of its own, its purchases have nothing to resolve
+    /// against and group under the raw SKU as a phantom app. Recording the SKU here lets a later
+    /// day's report, where the app *did* sell, supply the mapping and fold the phantom back in.
+    /// See `AppIdentity`.
+    public let sku: String
+
     public init(appleID: String, title: String, downloads: Decimal,
-                proceeds: [String: Decimal], unitsByProductType: [String: Decimal] = [:]) {
+                proceeds: [String: Decimal], unitsByProductType: [String: Decimal] = [:],
+                sku: String = "") {
         self.appleID = appleID
         self.title = title
         self.downloads = downloads
         self.proceeds = proceeds
         self.unitsByProductType = unitsByProductType
+        self.sku = sku
     }
 
     public init(from decoder: Decoder) throws {
@@ -118,6 +129,7 @@ public struct AppSales: Equatable, Codable, Sendable {
         proceeds = try container.decode([String: Decimal].self, forKey: .proceeds)
         unitsByProductType = try container.decodeIfPresent(
             [String: Decimal].self, forKey: .unitsByProductType) ?? [:]
+        sku = try container.decodeIfPresent(String.self, forKey: .sku) ?? ""
     }
 }
 

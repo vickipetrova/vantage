@@ -85,6 +85,27 @@ public enum Fmt {
         downloads(units) + downloadArrow
     }
 
+    /// How long ago something happened, in words. "just now", "3 minutes ago", "2 days ago".
+    ///
+    /// Relative rather than a clock time, because the question this answers is "is what I'm looking
+    /// at current?" — and "14:32" only answers that if you also know what time it is now.
+    public static func relative(_ date: Date, from now: Date = Date()) -> String {
+        let seconds = now.timeIntervalSince(date)
+        // Under a minute reads as "just now" rather than "0 minutes ago", which sounds broken.
+        if seconds < 60 { return "just now" }
+        // A future date means the clock moved, not that something is scheduled. Don't say
+        // "in 3 hours" about a fetch that already happened.
+        if seconds < 0 { return "just now" }
+        return relativeFormatter.localizedString(for: date, relativeTo: now)
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = .current
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
     /// A rate, to one decimal place. `3.4%`.
     ///
     /// One decimal rather than none: page view rates live in the low single digits, and rounding

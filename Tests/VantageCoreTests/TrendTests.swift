@@ -210,17 +210,38 @@ final class TrendTests: XCTestCase {
 
     // MARK: - Proceeds with a currency the ECB doesn't publish
 
-    /// The chart took only the converted total, so a day holding both dollars and Taiwan dollars was
-    /// plotted at the dollars alone — lower than the figure printed directly above it, with nothing
-    /// saying why.
-    func testADayWithUnconvertibleMoneyIsAGapAndIsCalledOut() {
-        let days = [day(end, units: 0, proceeds: ["USD": 100, "TWD": 30_000]),
+    /// A partly-convertible day is **drawn**, at the part that converts, and flagged.
+    ///
+    /// Making it a gap was tried and was worse: on a real portfolio paid partly in currencies the
+    /// ECB doesn't publish it produced a chart full of holes that read as failed fetches. The headline card shows the
+    /// converted total and names what it leaves out; the chart matches it, because a chart that
+    /// behaves differently from the number above it is its own kind of wrong.
+    func testAPartlyConvertibleDayIsPlottedAndFlagged() {
+        let days = [day(end, units: 0, proceeds: ["USD": 100, "ZZZ": 30_000]),
                     day(end.adding(days: -1), units: 0, proceeds: ["USD": 50])]
         let data = build(days, .proceeds, length: 2)
 
-        XCTAssertNil(data.points.last?.value, "The mixed day can't be stated as one number")
+        XCTAssertEqual(data.points.last?.value, 100, "drawn at the convertible part")
         XCTAssertEqual(data.points.first?.value, 50)
-        XCTAssertNotNil(data.note, "and the chart has to say a day is missing")
+    }
+
+    /// A day whose money is *entirely* unconvertible has no number to draw at all — that one really
+    /// is a gap, not a zero, because zero would be a lie about a day that earned.
+    func testADayWithNothingConvertibleIsAGapNotAZero() {
+        let days = [day(end, units: 0, proceeds: ["ZZZ": 30_000]),
+                    day(end.adding(days: -1), units: 0, proceeds: ["USD": 50])]
+        let data = build(days, .proceeds, length: 2)
+
+        XCTAssertNil(data.points.last?.value)
+    }
+
+    /// A day that simply earned nothing is a real zero and must stay on the line.
+    func testADayWithNoProceedsAtAllIsZeroNotAGap() {
+        let days = [day(end, units: 0, proceeds: [:]),
+                    day(end.adding(days: -1), units: 0, proceeds: ["USD": 50])]
+        let data = build(days, .proceeds, length: 2)
+
+        XCTAssertEqual(data.points.last?.value, 0)
     }
 
     // MARK: - Storage round trip

@@ -32,6 +32,13 @@ chart, can't take a text field and can't navigate, which made it the ceiling for
   contains.
 - **Settings**, rebuilt as three tabs of grouped forms with per-field state, instead of one 860pt
   column.
+- **A status strip across the top of every section** saying how current the figures are and when
+  they last arrived. A failed refresh used to be a grey line at the bottom of one section, which is
+  how a three-day-old panel could look like a working one.
+- **Conversion for currencies the ECB doesn't publish.** AED, SAR and QAR are fixed by their central
+  banks and convert exactly. Ten floating currencies start from a built-in estimate so the money
+  lands in your totals, and Settings takes a rate of your own for any of them. Every figure says
+  which of the four it rests on.
 
 ### Changed
 
@@ -49,6 +56,8 @@ chart, can't take a text field and can't navigate, which made it the ceiling for
 - Comparisons measured raw totals across windows of different cached lengths, so eight flat days
   read as a 600% rise.
 - `Fmt.wrap` and the eight-row cap are gone with the menu that needed them.
+- In-app purchases from an app that sold no units of its own that day appeared as a separate,
+  iconless app named after the app's SKU. They now fold back into the app they belong to.
 
 ### Security
 

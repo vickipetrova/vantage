@@ -315,7 +315,6 @@ struct TrendCard: View {
                 Footnote(text: "No days cached yet.").frame(height: 40)
             } else {
                 TrendChart(data: trend, highlightLast: model.range.days)
-                if let note = trend.note { Footnote(text: note) }
                 HStack {
                     Text(Fmt.reportDate(trend.points.first?.date ?? ReportDate.yesterday()))
                     Spacer(minLength: 0)

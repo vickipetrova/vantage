@@ -209,13 +209,13 @@ public struct OverviewModel: Equatable {
 
         // MARK: Warnings
 
+        // Deliberately **not** the refresh error. That belongs to `Freshness` and the status bar
+        // across the top of every section — repeating it down here is what let "Can't reach
+        // api.appstoreconnect.apple.com" sit unnoticed below the fold for three days.
         var warnings: [String] = []
         let skipped = days.reduce(0) { $0 + $1.skippedRows }
         if skipped > 0 {
             warnings.append("\(skipped) unreadable row\(skipped == 1 ? "" : "s") skipped")
-        }
-        if let error {
-            warnings.append((error as? SalesError)?.errorDescription ?? "Last refresh failed.")
         }
 
         return OverviewModel(headline: headline, apps: apps, windows: windows,
