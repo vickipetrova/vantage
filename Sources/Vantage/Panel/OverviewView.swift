@@ -21,7 +21,7 @@ struct OverviewView: View {
                 } else {
                     RangePicker(model: model)
                     if let headline = overview.headline {
-                        HeadlineCard(headline: headline, windows: overview.windows)
+                        HeadlineCard(headline: headline)
                     }
                     TrendCard(model: model)
                     apps(overview)

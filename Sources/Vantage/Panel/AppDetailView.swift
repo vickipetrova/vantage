@@ -27,7 +27,7 @@ struct AppDetailView: View {
                     } else {
                         RangePicker(model: model)
                         if let headline = detail.summary.headline {
-                            HeadlineCard(headline: headline, windows: detail.summary.windows)
+                            HeadlineCard(headline: headline)
                         }
                         TrendCard(model: model, appleID: appleID)
                         reviews

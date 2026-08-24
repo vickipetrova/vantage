@@ -55,6 +55,24 @@ public enum ReviewsError: LocalizedError, Equatable {
     /// Apple accepted the request and refused the content — 409 or 422.
     case rejected(detail: String?)
 
+    /// Whether this should stop a whole run rather than skip one app.
+    ///
+    /// A portfolio fetch is one request per app. A bad key or a role problem will fail identically
+    /// for every one of them, so continuing means thirty copies of the same message; a problem with
+    /// one app's data means the other twenty-nine are still worth fetching.
+    ///
+    /// Getting this wrong cost a real user every single review: the first app in the list was a
+    /// phantom keyed by SKU, its rejection was treated as fatal, and the run stopped before
+    /// reaching any real app.
+    public var stopsTheRun: Bool {
+        switch self {
+        case .noKey, .unauthorized, .forbidden, .notAllowedToReply, .rateLimited, .network:
+            return true
+        case .http, .badResponse, .rejected:
+            return false
+        }
+    }
+
     public var errorDescription: String? {
         switch self {
         case .noKey:

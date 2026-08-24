@@ -329,4 +329,95 @@ final class ReportParserTests: XCTestCase {
             }
         }
     }
+    // MARK: - Gross customer sales
+
+    private func report(_ rows: [[String]]) -> String {
+        let header = ["Provider", "SKU", "Developer Proceeds", "Units", "Apple Identifier",
+                      "Title", "Product Type Identifier", "Currency of Proceeds",
+                      "Parent Identifier", "Customer Price", "Customer Currency"]
+        return ([header] + rows).map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
+    }
+
+    private func parse(_ rows: [[String]]) -> DaySales {
+        ReportParser.parse(report(rows), date: ReportDate(year: 2026, month: 8, day: 19),
+                           fetchedAt: Date())
+    }
+
+    func testGrossSalesAreReadInTheCustomersCurrency() {
+        let day = parse([["APPLE", "sku1", "0.70", "10", "111", "App One", "1", "USD", "",
+                          "0.99", "USD"]])
+        XCTAssertEqual(day.sales["USD"], Decimal(string: "9.90"))
+        XCTAssertEqual(day.proceeds["USD"], Decimal(string: "7.00"),
+                       "and proceeds are untouched")
+    }
+
+    /// The currency a customer pays in is not the currency you're paid in, and adding the two
+    /// together would be meaningless — so they are separate bags.
+    func testGrossAndProceedsCurrenciesAreKeptApart() {
+        let day = parse([["APPLE", "sku1", "0.70", "10", "111", "App One", "1", "USD", "",
+                          "150", "JPY"]])
+        XCTAssertEqual(day.sales["JPY"], 1500)
+        XCTAssertNil(day.sales["USD"])
+        XCTAssertEqual(day.proceeds["USD"], Decimal(string: "7.00"))
+    }
+
+    /// The trap, straight from Apple's own wording: "Refunds have negative values for Units and
+    /// Customer Price, and positive values for Developer Proceeds."
+    ///
+    /// So `units × customerPrice` is **positive** on a refund — a refund that increases gross sales.
+    /// The sign belongs to the price; the units only say how many.
+    func testARefundReducesGrossSalesRatherThanIncreasingIt() {
+        let day = parse([["APPLE", "sku1", "0.70", "-50", "111", "App One", "1F", "USD", "",
+                          "-0.99", "USD"]])
+        XCTAssertEqual(day.sales["USD"], Decimal(string: "-49.50"))
+        // And the opposite convention still holds for proceeds, where only the units are negative.
+        XCTAssertEqual(day.proceeds["USD"], Decimal(string: "-35.00"))
+    }
+
+    func testAMixOfSalesAndRefundsNets() {
+        let day = parse([["APPLE", "sku1", "0.70", "100", "111", "App One", "1", "USD", "",
+                          "0.99", "USD"],
+                         ["APPLE", "sku1", "0.70", "-50", "111", "App One", "1F", "USD", "",
+                          "-0.99", "USD"]])
+        XCTAssertEqual(day.sales["USD"], Decimal(string: "49.50"))
+    }
+
+    /// Free apps carry units and no price at all. Nothing changed hands, so nothing is recorded —
+    /// a zero would be indistinguishable from a paid app that sold nothing.
+    func testAFreeRowContributesNoGross() {
+        let day = parse([["APPLE", "sku1", "0", "40", "111", "App One", "1F", "", "", "0", ""]])
+        XCTAssertTrue(day.sales.isEmpty)
+        XCTAssertEqual(day.downloads, 40, "and the downloads still count")
+    }
+
+    /// A report without the columns is still a valid report — it just has no gross in it.
+    func testAReportWithoutCustomerPriceColumnsStillParses() {
+        let header = ["Provider", "SKU", "Developer Proceeds", "Units", "Apple Identifier",
+                      "Title", "Product Type Identifier", "Currency of Proceeds",
+                      "Parent Identifier"]
+        let tsv = ([header] + [["APPLE", "sku1", "0.70", "10", "111", "App One", "1", "USD", ""]])
+            .map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
+        let day = ReportParser.parse(tsv, date: ReportDate(year: 2026, month: 8, day: 19),
+                                     fetchedAt: Date())
+        XCTAssertTrue(day.sales.isEmpty)
+        XCTAssertEqual(day.proceeds["USD"], Decimal(string: "7.00"))
+    }
+
+    func testGrossIsRecordedPerAppAsWellAsPerDay() {
+        let day = parse([["APPLE", "sku1", "0.70", "10", "111", "App One", "1", "USD", "",
+                          "0.99", "USD"],
+                         ["APPLE", "sku2", "0.70", "5", "222", "App Two", "1", "USD", "",
+                          "1.99", "USD"]])
+        let one = day.apps.first { $0.appleID == "111" }
+        let two = day.apps.first { $0.appleID == "222" }
+        XCTAssertEqual(one?.sales["USD"], Decimal(string: "9.90"))
+        XCTAssertEqual(two?.sales["USD"], Decimal(string: "9.95"))
+    }
+
+    /// Stamped so `ReportStore` can tell a complete parse from an older, thinner one.
+    func testAParsedDayRecordsWhichParserReadIt() {
+        XCTAssertEqual(parse([["APPLE", "sku1", "0.70", "10", "111", "App One", "1", "USD", "",
+                               "0.99", "USD"]]).parserVersion, ReportParser.version)
+    }
+
 }

@@ -54,6 +54,10 @@ public struct ReportStore {
     /// reason the two origins are distinguished. See `docs/REPORT_FORMAT.md`.
     public func needsFetch(_ date: ReportDate, userInitiated: Bool = false) -> Bool {
         guard let cached = load(date) else { return true }
+        // A day read by an older parser holds less than the report did — gross sales, an app's SKU.
+        // The *report* is still immutable; our reading of it was incomplete, and Apple keeps daily
+        // reports for a year, so this refetches exactly those days once. See `ReportParser.version`.
+        if cached.parserVersion < ReportParser.version { return true }
         switch cached.origin {
         case .observed: return false
         case .assumedZero: return userInitiated

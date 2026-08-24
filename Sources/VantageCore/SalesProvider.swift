@@ -47,10 +47,27 @@ public struct DaySales: Equatable, Codable, Sendable {
     /// hand.
     public let unitsByProductType: [String: Decimal]
 
+    /// Gross customer spend, keyed by the currency the **customer** paid in.
+    ///
+    /// Deliberately a separate bag from `proceeds`: these are different currencies for the same
+    /// sale — a customer in Japan pays yen while you're paid in whatever that storefront settles
+    /// in — and adding them together would be meaningless. `proceeds` is what reaches you;
+    /// this is what changed hands.
+    ///
+    /// Empty for any day parsed before `ReportParser.version` 1.
+    public let sales: [String: Decimal]
+
+    /// Which parser read this day. See `ReportParser.version`.
+    public let parserVersion: Int
+
     public init(date: ReportDate, origin: Origin, downloads: Decimal,
                 proceeds: [String: Decimal], apps: [AppSales],
                 fetchedAt: Date, skippedRows: Int = 0,
-                unitsByProductType: [String: Decimal] = [:]) {
+                unitsByProductType: [String: Decimal] = [:],
+                sales: [String: Decimal] = [:],
+                parserVersion: Int = 0) {
+        self.sales = sales
+        self.parserVersion = parserVersion
         self.date = date
         self.origin = origin
         self.downloads = downloads
@@ -74,12 +91,19 @@ public struct DaySales: Equatable, Codable, Sendable {
         skippedRows = try container.decodeIfPresent(Int.self, forKey: .skippedRows) ?? 0
         unitsByProductType = try container.decodeIfPresent(
             [String: Decimal].self, forKey: .unitsByProductType) ?? [:]
+        sales = try container.decodeIfPresent([String: Decimal].self, forKey: .sales) ?? [:]
+        parserVersion = try container.decodeIfPresent(Int.self, forKey: .parserVersion) ?? 0
     }
 
     /// A day Apple published no report for, past the point where it might still arrive.
+    ///
+    /// Stamped with the current parser version even though nothing was parsed: there is no report
+    /// behind it to re-read, so a parser upgrade must not drag every zero day back through the
+    /// network. Overturning one is still Refresh Now's job, and only Refresh Now's.
     public static func zero(on date: ReportDate, fetchedAt: Date) -> DaySales {
         DaySales(date: date, origin: .assumedZero, downloads: 0,
-                 proceeds: [:], apps: [], fetchedAt: fetchedAt)
+                 proceeds: [:], apps: [], fetchedAt: fetchedAt,
+                 parserVersion: ReportParser.version)
     }
 }
 
@@ -110,9 +134,13 @@ public struct AppSales: Equatable, Codable, Sendable {
     /// See `AppIdentity`.
     public let sku: String
 
+    /// This app's gross customer spend, keyed by customer currency. See `DaySales.sales`.
+    public let sales: [String: Decimal]
+
     public init(appleID: String, title: String, downloads: Decimal,
                 proceeds: [String: Decimal], unitsByProductType: [String: Decimal] = [:],
-                sku: String = "") {
+                sku: String = "", sales: [String: Decimal] = [:]) {
+        self.sales = sales
         self.appleID = appleID
         self.title = title
         self.downloads = downloads
@@ -130,6 +158,7 @@ public struct AppSales: Equatable, Codable, Sendable {
         unitsByProductType = try container.decodeIfPresent(
             [String: Decimal].self, forKey: .unitsByProductType) ?? [:]
         sku = try container.decodeIfPresent(String.self, forKey: .sku) ?? ""
+        sales = try container.decodeIfPresent([String: Decimal].self, forKey: .sales) ?? [:]
     }
 }
 

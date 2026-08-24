@@ -67,6 +67,33 @@ final class ReviewsErrorTests: XCTestCase {
         }
     }
 
+    // MARK: - What stops a whole run
+
+    /// A portfolio fetch is one request per app. Getting this wrong cost a real user every single
+    /// review: the first app in the list was a phantom keyed by SKU, its rejection was treated as
+    /// fatal, and the run stopped before reaching a single real app.
+    func testAProblemWithOneAppDoesNotStopTheRun() {
+        XCTAssertFalse(ReviewsError.badResponse.stopsTheRun)
+        XCTAssertFalse(ReviewsError.http(500, detail: nil).stopsTheRun)
+        XCTAssertFalse(ReviewsError.rejected(detail: nil).stopsTheRun)
+    }
+
+    /// A bad key or a role problem fails identically for every app, so continuing means thirty
+    /// copies of the same message.
+    func testAKeyOrRoleProblemStopsTheRun() {
+        XCTAssertTrue(ReviewsError.noKey.stopsTheRun)
+        XCTAssertTrue(ReviewsError.unauthorized.stopsTheRun)
+        XCTAssertTrue(ReviewsError.forbidden(detail: nil).stopsTheRun)
+        XCTAssertTrue(ReviewsError.notAllowedToReply(detail: nil).stopsTheRun)
+    }
+
+    /// Rate limiting and being offline are about the connection, not the app — pressing on would
+    /// burn the rest of the budget or fail identically.
+    func testRateLimitingAndBeingOfflineStopTheRun() {
+        XCTAssertTrue(ReviewsError.rateLimited.stopsTheRun)
+        XCTAssertTrue(ReviewsError.network.stopsTheRun)
+    }
+
     /// Reviews failures must never be reported in the sales key's words. "Check your App Store
     /// Connect key" sends someone to re-enter a credential that is already correct.
     func testReviewsErrorsAreNotTheSalesErrorsWordForWord() {

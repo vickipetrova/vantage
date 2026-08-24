@@ -5,20 +5,32 @@ import Foundation
 /// Single-select, unlike `Prefs.metrics` — that set decides what the `↓` figure counts everywhere,
 /// which is a different question from which one line to draw.
 public enum TrendSeries: Hashable, Sendable {
-    /// Converted proceeds. Unavailable without a rate table, and says so rather than drawing zero.
+    /// Converted proceeds — what reaches you. Unavailable without a rate table, and says so rather
+    /// than drawing zero.
     case proceeds
+    /// Converted gross customer spend — what changed hands, before Apple's cut.
+    case sales
     case metric(Metric)
 
     public var label: String {
         switch self {
         case .proceeds: return "Proceeds"
+        case .sales: return "Sales"
         case .metric(let metric): return metric.label
         }
     }
 
-    /// Everything offerable, proceeds first.
+    /// Everything offerable, money first.
     public static var displayOrder: [TrendSeries] {
-        [.proceeds] + Metric.displayOrder.map(TrendSeries.metric)
+        [.proceeds, .sales] + Metric.displayOrder.map(TrendSeries.metric)
+    }
+
+    /// Whether this series is money, and so needs a rate table.
+    var isMoney: Bool {
+        switch self {
+        case .proceeds, .sales: return true
+        case .metric: return false
+        }
     }
 
     // MARK: - Storage
@@ -28,6 +40,7 @@ public enum TrendSeries: Hashable, Sendable {
     public var rawValue: String {
         switch self {
         case .proceeds: return "proceeds"
+        case .sales: return "sales"
         case .metric(let metric): return "metric:\(metric.rawValue)"
         }
     }
@@ -35,6 +48,10 @@ public enum TrendSeries: Hashable, Sendable {
     public init?(rawValue: String) {
         if rawValue == "proceeds" {
             self = .proceeds
+            return
+        }
+        if rawValue == "sales" {
+            self = .sales
             return
         }
         guard rawValue.hasPrefix("metric:"),
@@ -117,10 +134,10 @@ public enum Trend {
                               appleID: String? = nil) -> TrendData {
         // Proceeds across several currencies is not a number without rates, and the honest answer
         // is to draw nothing and say why — the same rule the headline figure follows.
-        if case .proceeds = series, rates == nil {
+        if series.isMoney, rates == nil {
             return TrendData(points: [], lower: 0, upper: 0, zeroUnit: nil,
                              upperLabel: "", lowerLabel: "",
-                             unavailable: "Exchange rates unavailable — can't chart proceeds")
+                             unavailable: "Exchange rates unavailable — can't chart money")
         }
 
         let byDate = Dictionary(days.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
@@ -171,7 +188,7 @@ public enum Trend {
         switch series {
         // Compact: an axis label is read for magnitude, and cents on it are four characters nobody
         // acts on — the same call the menu bar title makes.
-        case .proceeds: return Fmt.moneyCompact(value, currency: displayCurrency)
+        case .proceeds, .sales: return Fmt.moneyCompact(value, currency: displayCurrency)
         case .metric: return Fmt.downloads(value)
         }
     }
@@ -220,12 +237,14 @@ public enum Trend {
                               rates: FXRates?, displayCurrency: String)
         -> (value: Decimal?, partial: Bool) {
         switch series {
-        case .proceeds:
+        case .proceeds, .sales:
             let proceeds: [String: Decimal]
+            let isSales = series == .sales
             if let appleID {
-                proceeds = day.apps.first { $0.appleID == appleID }?.proceeds ?? [:]
+                let app = day.apps.first { $0.appleID == appleID }
+                proceeds = (isSales ? app?.sales : app?.proceeds) ?? [:]
             } else {
-                proceeds = day.proceeds
+                proceeds = isSales ? day.sales : day.proceeds
             }
             guard let rates else { return (nil, true) }
             // Straight to the rate table rather than through `Money`, so the unconverted remainder
