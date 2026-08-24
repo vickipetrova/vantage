@@ -7,12 +7,20 @@ $142 · 89↓
 ```
 
 Yesterday's proceeds and yesterday's first-time downloads, across every app under your vendor
-number. Click for the per-app breakdown, 7- and 30-day totals, and which day's report you're
-actually looking at.
+number.
 
-<!-- HERO GIF: record the menu bar with the dropdown open, save it as assets/vantage.gif,
+Click it and a panel opens with the rest: proceeds beside gross sales for a day, a week or a month,
+a chart of any series over 30 days, a per-app breakdown you can click into, your customer reviews
+with the App Store ratings beside them, and App Store impressions and page views. Every figure names
+the day it's for and says when it last arrived.
+
+There's also **`vantage-cli`**, a read-only companion that speaks
+[MCP](https://modelcontextprotocol.io) — so Claude, ChatGPT or any other agent can answer questions
+about your numbers without being able to touch your account.
+
+<!-- HERO GIF: record the menu bar with the panel open, save it as assets/vantage.gif,
      and uncomment the line below.
-<img src="assets/vantage.gif" alt="Vantage in the menu bar, with the dropdown open" width="420">
+<img src="assets/vantage.gif" alt="Vantage in the menu bar, with the panel open" width="420">
 -->
 
 The open-source alternative to the paid menu bar sales apps: your App Store Connect key never
@@ -135,7 +143,7 @@ there's no `LSUIElement`, no bundle identity for login items, and no notificatio
 Download the latest `Vantage.dmg` from [Releases](../../releases), open it, and drag Vantage into
 Applications.
 
-## Reading your numbers from a terminal, or from an AI
+## CLI and MCP — reading your numbers from a terminal, or from an AI
 
 `build.sh` also produces `vantage-cli`, a read-only companion to the app.
 
@@ -174,12 +182,15 @@ says how current the cache is — and the app, not the CLI, is what refreshes it
 
 | Setting | What it does | Default |
 |---|---|---|
-| Issuer ID / Key ID / `.p8` / Vendor Number | Credentials, stored in the Keychain | — |
-| Currency | What proceeds are converted to | Your region's currency |
+| Issuer ID / Key ID / `.p8` / Vendor Number | Sales credentials, stored in the Keychain | — |
+| Reviews & Analytics key | A second, optional key — see [Reviews](#reviews-optional) | — |
+| Enable replying to reviews | Off unless you switch it on; needs an Admin key | off |
+| Currency | What money is converted to | Your region's currency, if it can be converted |
+| Rates for currencies with no published rate | One field per currency the ECB doesn't cover | Vantage's estimate |
 | Notify me when a new report lands | One notification per new daily report | on |
 | Launch at Login | Delegates to `SMAppService` | off |
 
-The dropdown's **Metrics to show** submenu decides what the `↓` counts:
+The panel's **Metrics** picker, beside the app list, decides what the `↓` counts:
 
 | Metric | Product types | Default |
 |---|---|---|
@@ -200,6 +211,22 @@ usually reconciles them. Toggling recomputes from the cache — nothing is refet
 > signed apps, which is what `./build.sh` produces. If you built from source, no notification will
 > arrive. Everything else works normally. Signed releases are not subject to this.
 
+## Currencies
+
+Apple pays in around 45 currencies. The European Central Bank publishes rates for 30. Vantage
+resolves a rate in four steps, and never lets a later one override an earlier one:
+
+1. **The ECB's daily rate**, for the 30 it publishes.
+2. **A central-bank peg**, for AED, SAR and QAR. These are fixed by policy, so the number isn't an
+   approximation — it's the rate.
+3. **A rate you set**, under Settings › General, for anything else.
+4. **Vantage's own estimate**, so money in a currency nobody prices still lands in your totals
+   rather than sitting outside them. These drift, which is why they're used last and why the field
+   in Settings is pre-filled with one for you to correct.
+
+A currency with no rate at any of the four is listed in its own currency rather than folded into a
+total that would look complete and not be.
+
 ## Onboarding is not there yet
 
 The v0.1 Settings window is a form with four fields. If you already have an App Store Connect API
@@ -214,19 +241,22 @@ is the first piece of that; the rest is tracked as a
 
 ## Roadmap
 
-Deliberately small for v0.1. Not planned by me, but very welcome as contributions — these are filed
-as [good first issues](../../issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22):
+Not planned by me, but very welcome as contributions — these are filed as
+[good first issues](../../issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22):
 
-- **A guided setup walkthrough**, replacing the four-field form — the biggest known gap
+- **A guided setup walkthrough**, replacing the credentials form — the biggest known gap
 - A RevenueCat provider for near-real-time revenue, behind the existing `SalesProvider` protocol
 - A weekly digest notification
-- A sparkline of the last 30 days in the dropdown
-- A refunds row, separating gross sales from net
-- Multiple vendor numbers in one menu
+- A refunds row, separating refunds out rather than only netting them
+- Multiple vendor numbers in one menu bar item
 - CSV export of the cached history
 
-Out of scope: reviews and ratings, full charting, impressions from the Analytics API, and anything
-that estimates *today's* sales. See [CONTRIBUTING.md](CONTRIBUTING.md).
+**Out of scope: anything that estimates *today's* sales.** No API reports them, and a number nobody
+can check is worse than no number. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+v0.2 shipped several things this list previously called out of scope — the panel itself, per-app
+detail, charts, customer reviews and replies, App Store ratings, and impressions from the Analytics
+API. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Other projects in this space
 
@@ -250,12 +280,13 @@ afternoon.
 
 ```bash
 rm -rf /Applications/Vantage.app
+rm -f  /usr/local/bin/vantage-cli
 rm -rf ~/Library/Application\ Support/Vantage
 defaults delete com.vickipetrova.vantage
 ```
 
-Then remove the four Keychain items: open Keychain Access, search for `com.vickipetrova.vantage`,
-and delete what it finds — or use **Forget credentials** in Settings before uninstalling, which does
+Then remove the Keychain items — up to seven, if you added a reviews key: open Keychain Access,
+search for `com.vickipetrova.vantage`, and delete what it finds — or use **Forget credentials** in Settings before uninstalling, which does
 the same thing. Revoking the key in App Store Connect works too, and is worth doing regardless.
 
 If you turned on Launch at Login, switch it off first (or remove Vantage from System Settings ›
