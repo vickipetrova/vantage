@@ -48,14 +48,26 @@ struct AppDetailView: View {
         HStack(spacing: Theme.Space.row) {
             BackButton { model.navigate(to: .overview) }
             AppIconView(icon: model.icons[appleID], side: 32)
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(detail.title)
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
-                Text("Apple ID \(detail.appleID)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
+                HStack(spacing: Theme.Space.tight) {
+                    if let listing = model.listings[appleID],
+                       let average = listing.averageRating {
+                        Text("★ \(Fmt.rating(average))")
+                            .monospacedDigit()
+                        if let count = listing.ratingCount {
+                            Text("· \(Fmt.downloads(Decimal(count))) ratings")
+                                .monospacedDigit()
+                        }
+                        Text("·")
+                    }
+                    Text("Apple ID \(detail.appleID)")
+                        .monospacedDigit()
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
             Spacer(minLength: 0)
         }
@@ -63,6 +75,7 @@ struct AppDetailView: View {
         .padding(.vertical, Theme.Space.card)
         .onAppear {
             model.loadIconIfNeeded(appleID)
+            model.loadListingIfNeeded(appleID)
             model.loadReviews()
         }
     }

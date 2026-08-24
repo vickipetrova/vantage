@@ -170,8 +170,9 @@ sent anywhere** — they travel from Apple to your Mac and stop there.
 `~/Library/Application Support/Vantage/` holds one JSON file per day: the parsed totals for that
 date. Daily reports are immutable once published, so a cached day is never re-fetched. Alongside it,
 `icons/` holds one image per app — public store artwork, nothing derived from your account —
-`reviews/` holds one file per app of the review text shown in the panel, and `analytics/` holds the
-impression and page-view counts. Removing the reviews key deletes both `reviews/` and `analytics/`,
+`reviews/` holds one file per app of the review text shown in the panel, `listings/` holds each
+app's public App Store rating and rating count, and `analytics/` holds the impression and page-view
+counts. Removing the reviews key deletes both `reviews/` and `analytics/`,
 because that key is the only reason either was readable.
 
 `analytics/` is the only cache Vantage cannot rebuild: Apple keeps analytics report instances for 35

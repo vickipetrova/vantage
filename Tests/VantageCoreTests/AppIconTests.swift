@@ -91,4 +91,89 @@ final class AppIconTests: XCTestCase {
         XCTAssertEqual(store.load("6478"), payload)
         XCTAssertNil(store.load("9999"), "An uncached app must read as absent, not as empty data")
     }
+    // MARK: - Ratings
+
+    /// The rating comes out of the same lookup response the icon does, which is why it costs no new
+    /// request and no new host.
+    func testAListingCarriesTheRatingAlongsideTheArtwork() {
+        let payload = json("""
+        {"resultCount":1,"results":[{
+          "artworkUrl100":"https://is1-ssl.mzstatic.com/image/100x100bb.jpg",
+          "averageUserRating":4.7,
+          "userRatingCount":128}]}
+        """)
+        let listing = ITunesLookup.listing(from: payload, appleID: "6478")
+        XCTAssertEqual(listing?.appleID, "6478")
+        XCTAssertEqual(listing?.averageRating, Decimal(string: "4.7"))
+        XCTAssertEqual(listing?.ratingCount, 128)
+        XCTAssertEqual(listing?.artworkURL?.absoluteString,
+                       "https://is1-ssl.mzstatic.com/image/100x100bb.jpg")
+    }
+
+    /// An unrated app has no rating — **not** zero, which would draw as unanimously terrible rather
+    /// than as nobody having said anything yet.
+    func testAnUnratedAppHasNoRatingRatherThanZero() {
+        let payload = json(#"{"results":[{"averageUserRating":0,"userRatingCount":0}]}"#)
+        XCTAssertNil(ITunesLookup.listing(from: payload, appleID: "6478")?.averageRating)
+    }
+
+    func testAListingWithNoRatingFieldsAtAllStillParses() {
+        let payload = json(#"{"results":[{"artworkUrl100":"https://x.mzstatic.com/a.jpg"}]}"#)
+        let listing = ITunesLookup.listing(from: payload, appleID: "6478")
+        XCTAssertNotNil(listing)
+        XCTAssertNil(listing?.averageRating)
+        XCTAssertNil(listing?.ratingCount)
+    }
+
+    /// Apple sends these as JSON numbers, so they arrive as Double. 4.7 must not become
+    /// 4.699999999999999 on the way through.
+    func testTheRatingSurvivesTheJSONNumberIntact() {
+        let payload = json(#"{"results":[{"averageUserRating":4.7}]}"#)
+        let rating = try! XCTUnwrap(ITunesLookup.listing(from: payload, appleID: "1")?.averageRating)
+        XCTAssertEqual(Fmt.rating(rating), Fmt.rating(Decimal(string: "4.7")!))
+        XCTAssertFalse("\(rating)".hasPrefix("4.69"), "\(rating)")
+    }
+
+    /// An app that isn't on the store — TestFlight-only, or removed from sale — has no listing.
+    func testAnAppWithNoStoreResultHasNoListing() {
+        XCTAssertNil(ITunesLookup.listing(from: json(#"{"resultCount":0,"results":[]}"#),
+                                          appleID: "6478"))
+        XCTAssertNil(ITunesLookup.listing(from: json("not json"), appleID: "6478"))
+    }
+
+    // MARK: - The listing cache
+
+    /// A TTL cache, unlike the icon bytes beside it: an icon is effectively permanent, a rating
+    /// moves every day, and a stale one presented as current is a number nobody can act on.
+    func testListingsGoStaleAndIconsDoNot() {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("vantage-listing-tests-\(UUID().uuidString)")
+        let store = AppListingStore(directory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertTrue(store.needsFetch("6478", now: now))
+
+        store.save(AppListing(appleID: "6478", artworkURL: nil,
+                              averageRating: Decimal(string: "4.7"), ratingCount: 128,
+                              fetchedAt: now))
+        XCTAssertFalse(store.needsFetch("6478", now: now.addingTimeInterval(3600)))
+        XCTAssertTrue(store.needsFetch("6478",
+                                       now: now.addingTimeInterval(AppListingStore.maxAge + 1)))
+        // Stale is still readable — a rating from yesterday beats a blank while a request runs.
+        XCTAssertEqual(store.load("6478")?.averageRating, Decimal(string: "4.7"))
+    }
+
+    func testListingCachePathsAreValidatedNotSanitized() {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("vantage-listing-tests-\(UUID().uuidString)")
+        let store = AppListingStore(directory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        XCTAssertFalse(store.save(AppListing(appleID: "../../123/x", artworkURL: nil,
+                                             averageRating: nil, ratingCount: nil,
+                                             fetchedAt: Date())))
+        XCTAssertNil(store.load("../../123/x"))
+    }
+
 }
