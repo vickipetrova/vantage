@@ -9,11 +9,22 @@ struct PanelRootView: View {
         HStack(spacing: 0) {
             RailView(model: model)
             Divider().opacity(0.5)
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                // Above the section, not below it, and in every section rather than one. A failure
+                // buried under the Overview's footnotes went unnoticed for three days.
+                StatusBar(model: model)
+                Divider().opacity(0.35)
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
-        // The window's NSVisualEffectView provides the background. Anything opaque here would
-        // cover it and turn the panel into a plain grey box.
+        // Fills whatever the window gives it and never asks for more. Without the clamp, any
+        // wrapping text inside reports a minimum height that NSHostingView passes to the window,
+        // and the panel grows to fit its own contents instead of staying the size the route asked
+        // for.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // The window's backdrop provides the background. Anything opaque here would cover it and
+        // turn the panel into a plain grey box.
         .background(Color.clear)
     }
 

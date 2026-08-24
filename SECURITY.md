@@ -149,6 +149,14 @@ for **five**. Each token also carries a `scope` claim naming the single request 
 so a token that somehow escaped could fetch one sales report for one date and nothing else. Tokens
 are held in memory for the request and dropped — never written to disk.
 
+Three currencies Apple pays in — **AED, SAR and QAR** — are converted from a **hard-coded peg**
+rather than a fetched rate, because their central banks fix them against the US dollar and the ECB
+doesn't publish them. That is a number in the source, not a request: it adds no host and sends
+nothing. It also means that if one of those pegs is ever broken, Vantage's figure for it becomes
+wrong until the table is updated — so the panel names them wherever they're used, and the table
+lives in `FX.swift` with its dates rather than buried. Nothing else is hard-coded; a floating
+currency the ECB doesn't publish stays unconverted and is shown separately.
+
 The ECB request carries nothing. No token, no identifier, no app names, no numbers — it is a
 request for a public XML file of exchange rates, identical for every user in the world.
 

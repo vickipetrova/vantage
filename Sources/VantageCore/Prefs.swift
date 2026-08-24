@@ -14,6 +14,9 @@ public enum Prefs {
         static let trendSeries = "trendSeries"
         static let overviewRange = "overviewRange"
         static let repliesEnabled = "repliesEnabled"
+        static let lastRefreshSuccess = "lastRefreshSuccess"
+        static let manualRates = "manualRates"
+        static let manualRateDates = "manualRateDates"
     }
 
     /// What the menu bar renders money in. Defaults to the currency of the user's region, which is
@@ -29,13 +32,17 @@ public enum Prefs {
         set { defaults.set(newValue.uppercased(), forKey: Key.displayCurrency) }
     }
 
-    /// Currencies offered in Settings. The ECB's list, since anything outside it can't be converted
-    /// into anyway — offering a display currency Vantage can't convert to would be a trap.
-    public static let selectableCurrencies = [
+    /// Currencies offered in Settings.
+    ///
+    /// The ECB's list plus the hard USD pegs in `FXPeg`, because those are exactly the currencies
+    /// Vantage can convert. Offering a display currency it can't convert into would be a trap —
+    /// which is why this list is derived from the same rule the converter uses rather than
+    /// maintained beside it.
+    public static let selectableCurrencies: [String] = ([
         "AUD", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "EUR", "GBP", "HKD", "HUF", "IDR",
         "ILS", "INR", "ISK", "JPY", "KRW", "MXN", "MYR", "NOK", "NZD", "PHP", "PLN", "RON",
         "SEK", "SGD", "THB", "TRY", "USD", "ZAR",
-    ]
+    ] + FXPeg.unitsPerUSD.keys).sorted()
 
     /// Which unit metrics the `↓` figure counts.
     ///
@@ -99,6 +106,68 @@ public enum Prefs {
     public static var repliesEnabled: Bool {
         get { defaults.bool(forKey: Key.repliesEnabled) }
         set { defaults.set(newValue, forKey: Key.repliesEnabled) }
+    }
+
+    /// When Vantage last got something out of App Store Connect.
+    ///
+    /// Persisted so "updated 2 hours ago" survives a relaunch. Without it the panel forgets on every
+    /// launch and can only say "just now" about a fetch that hasn't happened yet.
+    public static var lastRefreshSuccess: Date? {
+        get { defaults.object(forKey: Key.lastRefreshSuccess) as? Date }
+        set { defaults.set(newValue, forKey: Key.lastRefreshSuccess) }
+    }
+
+    /// Rates the user typed in, for currencies nothing publishes a rate for.
+    ///
+    /// Units per **US dollar**, matching how these are quoted everywhere. Stored as strings so the
+    /// value that comes back is the value that went in — a `Decimal` written through a plist would
+    /// be round-tripped as a double, and this app does not put money near binary floating point.
+    ///
+    /// Only ever used where there is no published rate and no central-bank peg. A currency Vantage
+    /// can price properly is never converted at a hand-typed number.
+    public static var manualRates: [String: Decimal] {
+        get {
+            guard let stored = defaults.dictionary(forKey: Key.manualRates) as? [String: String]
+            else { return [:] }
+            var rates: [String: Decimal] = [:]
+            for (code, value) in stored {
+                // A zero or negative rate would divide the total into nonsense, so it's dropped
+                // rather than trusted.
+                if let decimal = Decimal(string: value), decimal > 0 {
+                    rates[code.uppercased()] = decimal
+                }
+            }
+            return rates
+        }
+        set {
+            var stored: [String: String] = [:]
+            for (code, rate) in newValue where rate > 0 {
+                stored[code.uppercased()] = "\(rate)"
+            }
+            defaults.set(stored, forKey: Key.manualRates)
+        }
+    }
+
+    /// When each manual rate was last set, so the UI can say how old it is. A hand-typed rate for a
+    /// floating currency goes stale silently; the date is the only thing that makes that visible.
+    public static var manualRateDates: [String: Date] {
+        get { (defaults.dictionary(forKey: Key.manualRateDates) as? [String: Date]) ?? [:] }
+        set { defaults.set(newValue, forKey: Key.manualRateDates) }
+    }
+
+    public static func setManualRate(_ rate: Decimal?, for currency: String, now: Date = Date()) {
+        let code = currency.uppercased()
+        var rates = manualRates
+        var dates = manualRateDates
+        if let rate, rate > 0 {
+            rates[code] = rate
+            dates[code] = now
+        } else {
+            rates.removeValue(forKey: code)
+            dates.removeValue(forKey: code)
+        }
+        manualRates = rates
+        manualRateDates = dates
     }
 
     public static var morningNotification: Bool {

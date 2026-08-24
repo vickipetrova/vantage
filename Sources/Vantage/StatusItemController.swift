@@ -110,13 +110,24 @@ final class StatusItemController: NSObject {
         }
 
         let units = Metric.units(in: latest, metrics: Prefs.metrics)
-        let text = money(latest.proceeds, compact: true).headline
+        let figures = money(latest.proceeds, compact: true).headline
             + " · \(Fmt.downloadsWithArrow(units))"
+
+        // A marker only when the figures are actually behind what Apple has published — never for a
+        // failed refresh that left nothing missing. Marking the ordinary case would train people to
+        // ignore the marker for the times it means something, and this is the one surface that is
+        // always on screen.
+        let freshness = Freshness.evaluate(newestCached: latest.date,
+                                           lastSuccess: Prefs.lastRefreshSuccess,
+                                           error: error)
+        let text = freshness.marksMenuBar ? "⚠︎ " + figures : figures
 
         // Monospaced digits so the title doesn't shuffle sideways as the numbers tick over.
         button.attributedTitle = NSAttributedString(string: text, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
         ])
+        button.toolTip = freshness.problem.map { "\(freshness.headline) — \($0)" }
+            ?? freshness.headline
     }
 
     /// Formats proceeds for display, via the rate table currently on hand.

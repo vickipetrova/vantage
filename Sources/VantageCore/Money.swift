@@ -88,8 +88,20 @@ public enum Money {
         if converted == 0, !unconverted.isEmpty {
             return unconvertedText(unconverted)
         }
-        let notes = unconverted.sorted { $0.key < $1.key }.map {
+        var notes = unconverted.sorted { $0.key < $1.key }.map {
             "+ \(Fmt.money($0.value, currency: $0.key)) — no ECB rate"
+        }
+        let estimated = rates.estimatedCurrencies(in: nonZero)
+        if !estimated.isEmpty {
+            notes.append("\(estimated.joined(separator: ", ")) converted at an estimated rate — "
+                         + "set your own in Settings")
+        }
+        let manual = rates.manuallyRatedCurrencies(in: nonZero)
+        if !manual.isEmpty {
+            // Said plainly. This figure rests on a number the user typed, and if it has drifted the
+            // total is wrong — so the total has to admit where it came from.
+            notes.append("\(manual.joined(separator: ", ")) converted at "
+                         + "\(manual.count == 1 ? "a rate" : "rates") you set")
         }
         let marker = compact ? "" : "≈ "
         return MoneyText(headline: marker + format(converted, displayCurrency),

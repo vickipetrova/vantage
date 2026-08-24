@@ -31,6 +31,11 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         get { model.testConnection } set { model.testConnection = newValue }
     }
 
+    /// Which currencies in the cache nothing can price. Supplied by the app.
+    var unpricedCurrencies: (() -> [String])? {
+        get { model.unpricedCurrencies } set { model.unpricedCurrencies = newValue }
+    }
+
     private let model = SettingsModel()
     private var window: NSWindow?
 

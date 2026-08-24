@@ -40,8 +40,35 @@ final class PanelModel: ObservableObject {
     /// How much of the cache the Overview summarises.
     @Published private(set) var range: OverviewRange = Prefs.overviewRange
 
+    // MARK: - Refresh state
+
+    /// When Vantage last got something out of App Store Connect. Restored from `Prefs`, so the
+    /// panel can answer "is this current?" the moment it opens rather than after the first fetch.
+    @Published private(set) var lastRefreshSuccess: Date? = Prefs.lastRefreshSuccess
+    @Published private(set) var isRefreshing = false
+
+    /// Whether what's on screen is current, and how loudly to say so.
+    var freshness: Freshness {
+        Freshness.evaluate(newestCached: days.first?.date,
+                           lastSuccess: lastRefreshSuccess,
+                           error: error)
+    }
+
+    func refreshStarted() {
+        isRefreshing = true
+    }
+
+    func refreshFinished(succeeded: Bool, at date: Date = Date()) {
+        isRefreshing = false
+        guard succeeded else { return }
+        lastRefreshSuccess = date
+        Prefs.lastRefreshSuccess = date
+    }
+
     func update(days: [DaySales], rates: FXRates?, error: Error?) {
-        self.days = days.sorted { $0.date > $1.date }
+        // Resolved here rather than in each section, so an in-app purchase whose app sold nothing
+        // that day is folded into that app everywhere at once — see `AppIdentity`.
+        self.days = AppIdentity.resolve(days).sorted { $0.date > $1.date }
         self.rates = rates
         self.error = error
         self.hasCredentials = true

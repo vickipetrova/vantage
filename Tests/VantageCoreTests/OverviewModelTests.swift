@@ -53,7 +53,15 @@ final class OverviewModelTests: XCTestCase {
         let model = build([day(yesterday, units: 10)], error: SalesError.rateLimited)
         XCTAssertNil(model.emptyMessage)
         XCTAssertNotNil(model.headline)
-        XCTAssertTrue(model.warnings.contains(SalesError.rateLimited.errorDescription!))
+    }
+
+    /// The refresh error belongs to `Freshness` and the status bar, which is at the top of every
+    /// section. Repeating it in a footnote at the bottom of one section is exactly how it went
+    /// unnoticed for three days.
+    func testTheRefreshErrorIsNotRepeatedInTheFootnotes() {
+        let model = build([day(yesterday, units: 10)], error: SalesError.network)
+        XCTAssertFalse(model.warnings.contains { $0.contains("reach") }, "\(model.warnings)")
+        XCTAssertTrue(model.warnings.isEmpty)
     }
 
     // MARK: - The seven-day comparison

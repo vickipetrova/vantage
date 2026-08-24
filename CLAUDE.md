@@ -39,7 +39,7 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/Backfill.swift` | Fetches missing days, newest first |
 | `Sources/VantageCore/Schedule.swift` | When to poll, and when a report deserves a notification |
 | `Sources/VantageCore/Metric.swift` | Which product types count as what |
-| `Sources/VantageCore/FX.swift` | ECB rates fetch, parse and conversion |
+| `Sources/VantageCore/FX.swift` | ECB rates fetch, parse, conversion, and the hard USD pegs |
 | `Sources/VantageCore/KeychainStore.swift` | Credential storage — two independent keys |
 | `Sources/VantageCore/ASCToken.swift` | The ES256 JWT, shared by both clients |
 | `Sources/VantageCore/Review.swift` | Review models, and JSON:API → `CustomerReview` |
