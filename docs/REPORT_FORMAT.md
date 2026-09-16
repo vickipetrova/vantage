@@ -56,7 +56,7 @@ wants the raw `r‖s` signature — `signature.rawRepresentation`, not the DER e
 ### Rate limits
 
 Every response carries `X-Rate-Limit: user-hour-lim:3500;user-hour-rem:500;` over a rolling hour,
-and 429 with `RATE_LIMIT_EXCEEDED` past the ceiling. A 30-day backfill is 30 requests, so this is
+and 429 with `RATE_LIMIT_EXCEEDED` past the ceiling. A year-long first backfill is 365 requests, so this is
 never close — but the header is free to read and worth backing off on.
 
 ## The response
@@ -203,6 +203,16 @@ That second rule is a guess, and it is allowed to be wrong. A day cached this wa
 **assumed zero, not observed zero**, and that distinction is load-bearing: **Refresh Now re-fetches
 assumed-zero days.** A report that lands unusually late is one menu click away from correcting
 itself. Days derived from an actual 200 are immutable and are never re-fetched, ever.
+
+Two limits on that, both since history became a year:
+
+- **Refresh Now only re-asks about the last 30 days** (`Backfill.lateReportWindowDays`). A late
+  report is hours late, not months, and re-fetching a year of zeros made one click hundreds of
+  requests.
+- **A 404 more than 330 days back isn't cached at all** (`ReportDate.zeroTrustedWithinDays`). Apple
+  deletes daily reports after a year and doesn't document what a request for a deleted one returns.
+  If it's the same 404, a zero written there would replace a day that earned money, with no copy
+  left anywhere to correct it from.
 
 Vantage must never render a "not published yet" as `$0 · 0↓`, and never leave a real zero day
 looking like a permanent loading state.

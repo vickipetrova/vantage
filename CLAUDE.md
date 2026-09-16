@@ -60,6 +60,8 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/AnalyticsStore.swift` | Merging archive, and how many instances a refresh needs |
 | `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
 | `Sources/VantageCore/CacheQuery.swift` | Read-only answers about the cache, for the CLI and MCP |
+| `Sources/VantageCore/QueryRange.swift` | Any span of days the CLI and MCP ask for — parsed strictly, resolved against the cache |
+| `Sources/VantageCore/CacheRetention.swift` | What's cached, and deleting the older part of it — only when the user asks |
 | `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on every host |
 | `Sources/VantageCLI/main.swift` | `vantage-cli` — subcommands over `CacheQuery` |
 | `Sources/VantageCLI/MCPServer.swift` | MCP over stdio, newline-delimited JSON-RPC |
@@ -129,6 +131,11 @@ which is what that mistake looks like when you make it.
 The target is `VantageCLI` producing a product named `vantage-cli`, **not** `vantage`: macOS
 filesystems are case-insensitive by default, so a `vantage` binary and the app's `Vantage` binary
 are the same path and the link step collides.
+
+**Ranges are any span of the cache**, through `QueryRange`: `--range 90d`, `--days N`, `--range all`,
+`--from`/`--to`. `CacheQuery` reads every cached day, not a window. Parsing refuses anything it
+doesn't recognise — it used to read an unknown range as 30 days, which answers a question nobody
+asked. `CacheRetention` deletes files and must never be reachable from this target.
 
 MCP's stdio transport is newline-delimited JSON-RPC, so **nothing may be written to stdout that
 isn't a message.** A stray `print` corrupts the stream and the client drops the connection.
@@ -213,8 +220,14 @@ The traps that cost real time here, all of which have tests:
 - **A 404 is ambiguous.** Apple only generates a report when at least one unit sold, so a missing
   report means either "not published yet" or "genuinely zero". Resolved by the clock: before 10:00
   PT it's pending; after, it's cached as `.assumedZero`. **Refresh Now re-fetches `.assumedZero`
-  days** — that's the escape hatch for a late report. `.observed` days are immutable and never
-  re-fetched, by anything.
+  days** within `Backfill.lateReportWindowDays` (30) — that's the escape hatch for a late report,
+  and re-asking about a whole year of zeros would make one click hundreds of requests. `.observed`
+  days are immutable and never re-fetched, by anything.
+- **History is a setting, a year by default** (`Prefs.historyDays`), because Apple deletes daily
+  reports after a year and a day never fetched is a day the CLI can never answer about. Near that
+  edge a 404 may mean *deleted* rather than *zero*, so past `ReportDate.zeroTrustedWithinDays` (330)
+  a 404 is left uncached instead of frozen as a zero. Nothing deletes cached days except the button
+  in Settings.
 - **Refunds are negative Units with positive per-unit proceeds**, so `Units × Developer Proceeds` is
   already correct. Never take an absolute value; never floor downloads at zero.
 - **In-app purchases carry their own Apple Identifier** and name their app only through

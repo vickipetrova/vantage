@@ -428,4 +428,45 @@ final class OverviewModelTests: XCTestCase {
         XCTAssertEqual(installs.headline?.units, 10)
         XCTAssertEqual(both.headline?.units, 15)
     }
+
+    // MARK: - Arbitrary spans
+
+    /// The CLI asks for spans the panel never shows: a length of its choosing, ending on a date of
+    /// its choosing rather than the newest cached day.
+    func testASpanCanEndBeforeTheNewestDay() {
+        let days = (0..<20).map { day(yesterday.adding(days: -$0), units: Decimal($0 + 1)) }
+        let end = yesterday.adding(days: -10)
+        let model = OverviewModel.build(
+            days: days, rates: rates, error: nil, metrics: [.installs], displayCurrency: "USD",
+            span: .init(title: "Custom", length: 3, end: end), now: now)
+        // Offsets 10, 11, 12 → units 11 + 12 + 13.
+        XCTAssertEqual(model.headline?.units, 36)
+        XCTAssertEqual(model.headline?.title, "Custom")
+        XCTAssertEqual(model.headline?.dateLabel, Fmt.span(from: end.adding(days: -2), to: end))
+        XCTAssertEqual(model.headline?.comparison?.contains("previous 3 days"), true)
+    }
+
+    func testALongSpanReportsItsCoverage() {
+        let days = (0..<10).map { day(yesterday.adding(days: -$0), units: 1) }
+        let model = OverviewModel.build(
+            days: days, rates: rates, error: nil, metrics: [.installs], displayCurrency: "USD",
+            span: .init(title: "Last 400 days", length: 400), now: now)
+        XCTAssertEqual(model.headline?.coverage, "10 of 400 days cached")
+        XCTAssertEqual(model.headline?.units, 10)
+    }
+
+    /// The panel's three ranges go through the same path, so they must still read the same.
+    func testTheRangeOverloadMatchesItsSpan() {
+        let days = (0..<40).map { day(yesterday.adding(days: -$0), units: Decimal($0)) }
+        for range in OverviewRange.allCases {
+            let viaRange = OverviewModel.build(days: days, rates: rates, error: nil,
+                                               metrics: [.installs], displayCurrency: "USD",
+                                               range: range, now: now)
+            let viaSpan = OverviewModel.build(days: days, rates: rates, error: nil,
+                                              metrics: [.installs], displayCurrency: "USD",
+                                              span: range.span, now: now)
+            XCTAssertEqual(viaRange, viaSpan, "\(range)")
+        }
+    }
+
 }

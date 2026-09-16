@@ -16,9 +16,6 @@ public struct CacheQuery {
     private let listings: AppListingStore
     private let fx: FX
 
-    /// How far back to read. Wider than the fetch window, because the cache accumulates.
-    private static let windowDays = 60
-
     public init(reports: ReportStore = ReportStore(),
                 reviews: ReviewStore = ReviewStore(),
                 analytics: AnalyticsStore = AnalyticsStore(),
@@ -46,9 +43,25 @@ public struct CacheQuery {
 
     // MARK: - Shared state
 
+    /// Everything cached, newest first. Not a fixed window: the cache keeps days for as long as
+    /// the app has been collecting them, and a question about last year deserves last year.
     private var days: [DaySales] {
-        AppIdentity.resolve(reports.loadAll(ReportDate.yesterday().lastDays(Self.windowDays)))
-            .sorted { $0.date > $1.date }
+        AppIdentity.resolve(reports.loadAllCached()).sorted { $0.date > $1.date }
+    }
+
+    /// The range pinned to dates, the days inside it, and the span `OverviewModel` totals.
+    private func select(_ range: QueryRange, from days: [DaySales])
+        -> (resolved: QueryRange.Resolved, window: [DaySales], span: OverviewModel.Span)? {
+        guard let newest = days.first?.date, let oldest = days.last?.date else { return nil }
+        let resolved = range.resolve(oldest: oldest, newest: newest)
+        let window = days.filter { $0.date >= resolved.start && $0.date <= resolved.end }
+        let title: String
+        switch range {
+        case .last(let count): title = count == 1 ? "1 day" : "Last \(count) days"
+        case .between: title = Fmt.span(from: resolved.start, to: resolved.end)
+        }
+        return (resolved, window,
+                OverviewModel.Span(title: title, length: resolved.dayCount, end: resolved.end))
     }
 
     /// Cached rates only — fetching would make this a network tool, which is exactly what it isn't.
@@ -75,17 +88,13 @@ public struct CacheQuery {
         public let daysInRange: Int
     }
 
-    public func sales(range: OverviewRange) -> SalesSnapshot? {
+    public func sales(range: QueryRange) -> SalesSnapshot? {
         let days = self.days
-        guard let latest = days.first else { return nil }
-
-        let end = latest.date
-        let start = end.adding(days: -(range.days - 1))
-        let window = days.filter { $0.date >= start && $0.date <= end }
+        guard let (resolved, window, span) = select(range, from: days) else { return nil }
 
         let model = OverviewModel.build(days: days, rates: rates, error: nil,
                                         metrics: Prefs.metrics,
-                                        displayCurrency: Prefs.displayCurrency, range: range)
+                                        displayCurrency: Prefs.displayCurrency, span: span)
 
         var unconverted: [String: Decimal] = [:]
         if let rates {
@@ -99,9 +108,9 @@ public struct CacheQuery {
         }
 
         return SalesSnapshot(
-            range: range.rawValue,
-            from: start.apiString,
-            to: end.apiString,
+            range: range.label,
+            from: resolved.start.apiString,
+            to: resolved.end.apiString,
             displayCurrency: Prefs.displayCurrency,
             proceeds: model.headline?.money.isComparable == true
                 ? Self.rounded(model.headline?.money.sortKey) : nil,
@@ -111,7 +120,7 @@ public struct CacheQuery {
             comparison: model.headline?.comparison,
             unconverted: unconverted,
             daysCached: window.count,
-            daysInRange: range.days)
+            daysInRange: resolved.dayCount)
     }
 
     // MARK: - Apps
@@ -125,10 +134,12 @@ public struct CacheQuery {
         public let ratingCount: Int?
     }
 
-    public func apps(range: OverviewRange) -> [AppSnapshot] {
+    public func apps(range: QueryRange) -> [AppSnapshot] {
+        let days = self.days
+        guard let (_, _, span) = select(range, from: days) else { return [] }
         let model = OverviewModel.build(days: days, rates: rates, error: nil,
                                         metrics: Prefs.metrics,
-                                        displayCurrency: Prefs.displayCurrency, range: range)
+                                        displayCurrency: Prefs.displayCurrency, span: span)
         return model.apps.map { app in
             let listing = listings.load(app.appleID)
             return AppSnapshot(appleID: app.appleID, title: app.title,
@@ -219,6 +230,8 @@ public struct CacheQuery {
         public let headline: String
         public let severity: String
         public let newestReport: String?
+        /// How far back a question can usefully reach.
+        public let oldestReport: String?
         public let daysCached: Int
         public let displayCurrency: String
         public let ratesPublished: String?
@@ -236,6 +249,7 @@ public struct CacheQuery {
             headline: freshness.headline,
             severity: "\(freshness.severity)",
             newestReport: days.first?.date.apiString,
+            oldestReport: days.last?.date.apiString,
             daysCached: days.count,
             displayCurrency: Prefs.displayCurrency,
             ratesPublished: rates?.published,

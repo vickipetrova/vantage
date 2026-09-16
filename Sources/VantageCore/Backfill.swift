@@ -2,10 +2,10 @@ import Foundation
 
 /// Fetches the days that aren't cached yet, one at a time.
 ///
-/// Serial and unhurried on purpose. Thirty days is thirty requests against a rolling-hour limit of
-/// several thousand, so this is nowhere near Apple's ceiling — but a burst of parallel requests from
-/// a menu bar app on every launch is bad manners for no gain, and the results are only needed once
-/// the whole window is in.
+/// Serial and unhurried on purpose. A full year is 365 requests against a rolling-hour limit of
+/// several thousand, so even a first run is nowhere near Apple's ceiling — but a burst of parallel
+/// requests from a menu bar app is bad manners for no gain. Newest first means the days the panel
+/// shows land in the first seconds; the rest of the year fills in behind them, once.
 public final class Backfill {
     private let provider: SalesProvider
     private let store: ReportStore
@@ -13,6 +13,14 @@ public final class Backfill {
     /// Gap between requests. Long enough to be visibly gentle, short enough that a cold start
     /// finishes while the user is still curious.
     public var delayBetweenRequests: TimeInterval = 0.4
+
+    /// How far back Refresh Now re-asks about days recorded as assumed zeros.
+    ///
+    /// That re-ask exists for a report published later than Apple's own window — hours late, a day
+    /// at most. It was thirty days when thirty days was all Vantage fetched; with a year of history,
+    /// re-asking about every zero would make one click a few hundred requests for an app that often
+    /// sells nothing.
+    public static let lateReportWindowDays = 30
 
     public init(provider: SalesProvider, store: ReportStore) {
         self.provider = provider
@@ -39,14 +47,19 @@ public final class Backfill {
     ///
     /// - Parameters:
     ///   - userInitiated: true when the user pressed Refresh Now, which is the only thing that
-    ///     re-fetches a day previously written off as an assumed zero.
+    ///     re-fetches a day previously written off as an assumed zero — within
+    ///     `lateReportWindowDays`.
     ///   - now: injectable clock, so the "has this report given up on arriving" rule is testable.
     ///   - onDay: called on an arbitrary queue as each day resolves.
     ///   - completion: called once, after the last date.
     public func run(dates: [ReportDate], userInitiated: Bool = false, now: Date = Date(),
                     onDay: @escaping (DaySales) -> Void,
                     completion: @escaping (Error?) -> Void) {
-        let queue = dates.sorted(by: >).filter { store.needsFetch($0, userInitiated: userInitiated) }
+        let newest = ReportDate.yesterday(now: now)
+        let queue = dates.sorted(by: >).filter { date in
+            let recent = date.days(to: newest) < Self.lateReportWindowDays
+            return store.needsFetch(date, userInitiated: userInitiated && recent)
+        }
         next(queue, index: 0, now: now, firstError: nil, onDay: onDay, completion: completion)
     }
 
@@ -70,7 +83,10 @@ public final class Backfill {
                 // No report. Either it hasn't been published yet, or the day genuinely had no
                 // units — Apple only generates a report when at least one sold, and the status
                 // code is identical either way. Resolved by the clock; see docs/REPORT_FORMAT.md.
-                if !date.mayStillArrive(now: now) {
+                //
+                // Except near the end of Apple's year, where a 404 may mean the report was deleted.
+                // Left uncached, so it's asked about again rather than frozen as a zero.
+                if !date.mayStillArrive(now: now), !date.isTooOldToAssumeZero(now: now) {
                     let zero = DaySales.zero(on: date, fetchedAt: now)
                     self.store.save(zero)
                     onDay(zero)

@@ -6,6 +6,18 @@ All notable changes to Vantage are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The CLI and MCP take any range.** `--range 90d`, `--days N`, `--range all` and `--from`/`--to`
+  (`days`, `from`, `to` over MCP), over everything cached rather than a fixed 60 days. An
+  unrecognised range is refused with a reason instead of silently meaning 30 days, and
+  `get_status` now reports the oldest cached day.
+- **History to fetch**, in Settings › General › Data: 30 days, 90 days, 6 months, or a year —
+  Apple's maximum, and the default. The first run with a year fetches it once, newest first.
+- **Delete data older than a date**, behind a confirmation that says what goes, that it can't be
+  undone, and when those days will simply be downloaded again. Settings shows how much is cached
+  and how much space it takes.
+
 ### Fixed
 
 - **Analytics never produced a single number.** App Store Connect accepts a JWT `scope` claim naming

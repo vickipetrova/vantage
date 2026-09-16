@@ -180,6 +180,11 @@ public enum Fmt {
         return "\(reportDate(start)) – \(reportDate(end))"
     }
 
+    /// A size on disk, the way Finder writes it: "1.3 MB".
+    public static func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+
     /// A review's date. A real instant rather than a report day, so it stays in the local zone —
     /// unlike everything derived from a sales report, which is Pacific.
     public static func reviewDate(_ date: Date) -> String {

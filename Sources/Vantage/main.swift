@@ -16,12 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pollTimer: Timer?
     private var isFetching = false
 
-    /// How far back the first run *fetches*. Enough for the 7- and 30-day rows and no further;
-    /// Apple keeps daily reports for a year, so a wider net is possible but pointless.
-    private static let backfillDays = 30
-
-    /// How far back the panel *reads from disk*. Wider than the backfill on purpose and free —
-    /// this is a cache read, not a request.
+    /// How far back the panel *reads from disk*. Independent of the fetch window: the panel's widest
+    /// range is 30 days, and this is that plus the 30 before it. A cache read, not a request.
     ///
     /// Without it the "vs previous 30 days" comparison could never appear: rendering loaded exactly
     /// thirty days, so the thirty days before them were never in hand and the comparison was
@@ -52,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
         settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
         settingsWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
+        // Not user-initiated: a wider window should fill in, not re-ask about assumed zeros.
+        settingsWindow.onHistoryChanged = { [weak self] in self?.refresh(userInitiated: false) }
         settingsWindow.unpricedCurrencies = { [weak self] in self?.unpricedCurrencies() ?? [] }
         settingsWindow.testConnection = { [weak self] completion in
             self?.testConnection(completion) }
@@ -116,7 +114,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Rendering
 
     /// The dates to fetch.
-    private var fetchWindow: [ReportDate] { ReportDate.yesterday().lastDays(Self.backfillDays) }
+    ///
+    /// `Prefs.historyDays`, a year by default. Apple deletes daily reports after that, and the CLI
+    /// answers questions about any stretch of the cache — so a day not fetched within the year is
+    /// a day no one can ask about, ever. Only missing days are requested, so after the first run
+    /// this is one or two requests a day however wide it is.
+    private var fetchWindow: [ReportDate] { ReportDate.yesterday().lastDays(Prefs.historyDays) }
     /// The dates to render from cache.
     private var renderWindow: [ReportDate] { ReportDate.yesterday().lastDays(Self.renderDays) }
 

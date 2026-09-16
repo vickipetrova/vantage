@@ -146,6 +146,19 @@ final class BackfillTests: XCTestCase {
         XCTAssertEqual(store.load(date)?.downloads, 89)
     }
 
+    /// With a year of history, re-asking about every assumed zero would turn Refresh Now into a
+    /// few hundred requests for an app that often sells nothing. A report doesn't turn up a month
+    /// late, so the escape hatch covers the recent window it was built for.
+    func testRefreshNowOnlyReasksAboutRecentAssumedZeros() {
+        let recent = today.adding(days: -(Backfill.lateReportWindowDays - 1))
+        let old = today.adding(days: -Backfill.lateReportWindowDays)
+        store.save(DaySales.zero(on: recent, fetchedAt: afterCutoff))
+        store.save(DaySales.zero(on: old, fetchedAt: afterCutoff))
+
+        run([recent, old], userInitiated: true, now: afterCutoff)
+        XCTAssertEqual(provider.requested, [recent])
+    }
+
     func testRefreshNowStillDoesntRefetchAPublishedDay() {
         let date = ReportDate(year: 2026, month: 8, day: 2)
         store.save(day(date, downloads: 5))
@@ -203,4 +216,28 @@ final class BackfillTests: XCTestCase {
         XCTAssertTrue(result.days.isEmpty)
         XCTAssertNil(result.error)
     }
+
+    // MARK: - Apple's retention edge
+
+    /// Apple deletes daily reports after a year, and doesn't document what a request for a
+    /// deleted one returns. If it's a 404, recording a zero would overwrite a day that earned money
+    /// with a permanent, plausible-looking nothing. Near the edge, leave it uncached instead.
+    func testAMissingReportNearApplesRetentionEdgeIsNotCachedAsZero() {
+        let old = today.adding(days: -(ReportDate.zeroTrustedWithinDays + 10))
+        provider.answers[old.apiString] = .success(nil)
+
+        let result = run([old], now: afterCutoff)
+        XCTAssertTrue(result.days.isEmpty)
+        XCTAssertNil(store.load(old))
+        XCTAssertNil(result.error, "not an error either — there's nothing the user can fix")
+    }
+
+    func testARealReportNearTheEdgeIsStillCached() {
+        let old = today.adding(days: -(ReportDate.zeroTrustedWithinDays + 10))
+        provider.answers[old.apiString] = .success(day(old))
+
+        run([old], now: afterCutoff)
+        XCTAssertEqual(store.load(old)?.origin, .observed)
+    }
+
 }

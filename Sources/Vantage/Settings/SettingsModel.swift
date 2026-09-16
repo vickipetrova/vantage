@@ -43,6 +43,7 @@ final class SettingsModel: ObservableObject {
     var onCredentialsChanged: (() -> Void)?
     var onPreferencesChanged: (() -> Void)?
     var onReviewsKeyChanged: (() -> Void)?
+    var onHistoryChanged: (() -> Void)?
     /// Makes one real request and reports whether it worked. Injected so this type stays a form and
     /// knows nothing about App Store Connect.
     var testConnection: ((@escaping (Result<Void, Error>) -> Void) -> Void)?
@@ -104,6 +105,71 @@ final class SettingsModel: ObservableObject {
     }
 
     @Published var launchAtLogin = LaunchAtLogin.isEnabled
+
+    // MARK: - Data
+
+    /// How far back sales are fetched. Raising it fetches the older days on a refresh started
+    /// right away; lowering it deletes nothing.
+    @Published var historyDays = Prefs.historyDays {
+        didSet {
+            guard historyDays != oldValue else { return }
+            Prefs.historyDays = historyDays
+            onHistoryChanged?()
+        }
+    }
+
+    private let retention = CacheRetention()
+
+    /// "312 days of sales, 3 Jul 2025 – 15 Sep 2026 · 1.3 MB"
+    @Published private(set) var cacheSummary = ""
+
+    /// The first day to keep. Defaults to the start of Apple's year, which deletes nothing Apple
+    /// couldn't still supply — the least surprising place for a destructive picker to start.
+    @Published var deleteBefore = SettingsModel.localDate(
+        ReportDate.yesterday().adding(days: -(ReportStore.appleRetentionDays - 1)))
+
+    /// Set while the confirmation is showing; the text is built in `CacheRetention`.
+    @Published var pendingDeletion: String?
+    @Published private(set) var dataStatus = Status()
+
+    func refreshCacheSummary() {
+        cacheSummary = retention.summary().text
+    }
+
+    func requestDelete() {
+        let cutoff = Self.reportDate(deleteBefore)
+        let deletion = retention.preview(before: cutoff)
+        guard !deletion.isEmpty else {
+            dataStatus = Status(message: "Nothing is cached from before \(Fmt.reportDate(cutoff)).")
+            return
+        }
+        dataStatus = Status()
+        pendingDeletion = CacheRetention.confirmation(for: deletion, before: cutoff,
+                                                      historyDays: Prefs.historyDays)
+    }
+
+    func confirmDelete() {
+        pendingDeletion = nil
+        let cutoff = Self.reportDate(deleteBefore)
+        let deleted = retention.delete(before: cutoff)
+        dataStatus = Status(message: "Deleted \(deleted.salesDays) days of sales and "
+                            + "\(deleted.analyticsDays) days of analytics.")
+        refreshCacheSummary()
+        onPreferencesChanged?()  // Re-renders from what's left.
+    }
+
+    /// The date picker speaks the user's calendar; a report day is a calendar date with no zone.
+    /// Converted by components, never by instant — an instant would shift the day for anyone far
+    /// from Pacific.
+    private static func reportDate(_ date: Date) -> ReportDate {
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return ReportDate(year: parts.year!, month: parts.month!, day: parts.day!)
+    }
+
+    private static func localDate(_ date: ReportDate) -> Date {
+        Calendar.current.date(from: DateComponents(year: date.year, month: date.month,
+                                                   day: date.day)) ?? Date()
+    }
 
     // MARK: - Manual rates
 
@@ -177,6 +243,8 @@ final class SettingsModel: ObservableObject {
         repliesEnabled = Prefs.repliesEnabled
         rememberCredentials = Prefs.rememberCredentials
         launchAtLogin = LaunchAtLogin.isEnabled
+        historyDays = Prefs.historyDays
+        refreshCacheSummary()
         loadRates()
         refreshStates()
     }

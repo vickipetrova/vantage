@@ -113,6 +113,39 @@ public struct AnalyticsStore {
         }
     }
 
+    /// Apps with an archive on disk.
+    private func appleIDs() -> [String] {
+        guard let names = try? fileManager.contentsOfDirectory(atPath: directory.path) else {
+            return []
+        }
+        return names.filter { $0.hasSuffix(".json") }.map { String($0.dropLast(5)) }
+            .filter { url(for: $0) != nil }
+    }
+
+    /// Every date any app has figures for. A date is one day of analytics however many apps
+    /// share it — that's the unit Settings counts in.
+    public func cachedDates() -> Set<ReportDate> {
+        Set(appleIDs().flatMap { load($0)?.map(\.date) ?? [] })
+    }
+
+    /// Drops days before `cutoff` from every app's archive and says how many distinct dates went.
+    ///
+    /// **`fetchedAt` is kept, not reset.** Pruning is not a fetch: stamping the file as fresh would
+    /// tell `needsFetch` and `instancesNeeded` that nothing is missing and skip the next real one.
+    /// Apple keeps instances for 35 days, so days pruned past that are gone for good.
+    @discardableResult
+    public func prune(keepingSince cutoff: ReportDate) -> Int {
+        var removed: Set<ReportDate> = []
+        for id in appleIDs() {
+            guard let entry = entry(id) else { continue }
+            let kept = entry.days.filter { $0.date >= cutoff }
+            guard kept.count != entry.days.count else { continue }
+            entry.days.filter { $0.date < cutoff }.forEach { removed.insert($0.date) }
+            save(kept, for: id, now: entry.fetchedAt)
+        }
+        return removed.count
+    }
+
     /// Called when the reviews key goes away — analytics was readable only because it existed.
     public func forgetAll() {
         try? fileManager.removeItem(at: directory)
