@@ -59,3 +59,16 @@ jobs:
             exit 1
           fi
           echo "OK — no keys or raw reports tracked."
+
+      - name: Check no build output was committed
+        run: |
+          set -euo pipefail
+          # Object files carry the absolute path of the machine that built them, and they're
+          # megabytes of noise in every checkout. .gitignore covers them; this catches a forced add.
+          bad="$(git ls-files | grep -E '\.(o|d|dia|swiftdeps|swiftmodule|swiftdoc|swiftsourceinfo)$' || true)"
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "::error::Compiler output is tracked in git. Build with swift build or build.sh."
+            exit 1
+          fi
+          echo "OK — no build output tracked."

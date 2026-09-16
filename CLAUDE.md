@@ -17,6 +17,10 @@ There is no Xcode project. `Package.swift` defines the targets; `build.sh` runs
 `swift build -c release --arch arm64 --arch x86_64`, copies the universal binary into a hand-written
 `.app` bundle, writes `Info.plist`, and ad-hoc signs it.
 
+Never run `swiftc` by hand in the repo root — it drops `.o`/`.d`/`.dia`/`.swiftdeps` files beside
+`Package.swift`, and a hundred of them were once committed that way. `.gitignore` and CI both refuse
+them now.
+
 `swift test` needs full Xcode — the Command Line Tools don't ship XCTest. Building doesn't.
 
 `swift run` produces a bare binary with no `Info.plist`, so no `LSUIElement`, no login-item identity
