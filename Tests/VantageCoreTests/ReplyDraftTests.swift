@@ -220,6 +220,160 @@ final class ReplyDraftTests: XCTestCase {
         XCTAssertFalse(draft.isReplacement)
         XCTAssertEqual(draft.text, "")
     }
+
+    // MARK: - Drafting with Apple Intelligence
+
+    func testADraftReplacesTheTextAndCanBeUndone() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("My own start")
+
+        XCTAssertTrue(draft.beginDrafting())
+        XCTAssertTrue(draft.applyDraft("A generated reply."))
+        XCTAssertEqual(draft.text, "A generated reply.")
+        XCTAssertEqual(draft.assist, .drafted(original: "My own start"))
+
+        draft.undoDraft()
+        XCTAssertEqual(draft.text, "My own start")
+        XCTAssertEqual(draft.assist, .idle)
+    }
+
+    func testUndoRestoresEmptyText() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.beginDrafting()
+        draft.applyDraft("A generated reply.")
+        draft.undoDraft()
+        XCTAssertEqual(draft.text, "")
+    }
+
+    /// Try again replaces one draft with another. Undo is for getting back to what *you* had.
+    func testUndoAfterTryAgainRestoresTheOriginalNotThePreviousDraft() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Mine")
+        draft.beginDrafting()
+        draft.applyDraft("First draft.")
+        draft.beginDrafting()
+        draft.applyDraft("Second draft.")
+
+        XCTAssertEqual(draft.text, "Second draft.")
+        draft.undoDraft()
+        XCTAssertEqual(draft.text, "Mine")
+    }
+
+    func testAFailedTryAgainCanStillBeUndone() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Mine")
+        draft.beginDrafting()
+        draft.applyDraft("First draft.")
+        draft.beginDrafting()
+        draft.draftFailed(.failed)
+
+        XCTAssertEqual(draft.assist, .failed(.failed, undo: "Mine"))
+        XCTAssertEqual(draft.undoText, "Mine")
+        XCTAssertEqual(draft.text, "First draft.", "A failure leaves the box as it was")
+        draft.undoDraft()
+        XCTAssertEqual(draft.text, "Mine")
+    }
+
+    func testAFirstFailureOffersNoUndo() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Mine")
+        draft.beginDrafting()
+        draft.draftFailed(.declined)
+        XCTAssertEqual(draft.assist, .failed(.declined, undo: nil))
+        XCTAssertNil(draft.undoText)
+
+        draft.undoDraft()
+        XCTAssertEqual(draft.text, "Mine")
+    }
+
+    /// The model takes seconds. Anything typed in that time is the user's and must not be
+    /// overwritten by a draft they've stopped waiting for.
+    func testADraftArrivingAfterTypingIsDiscarded() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.beginDrafting()
+        draft.edit("I started typing")
+
+        XCTAssertFalse(draft.applyDraft("A generated reply."))
+        XCTAssertEqual(draft.text, "I started typing")
+        XCTAssertEqual(draft.assist, .idle)
+    }
+
+    /// SwiftUI writes the binding back with an unchanged value. That isn't typing.
+    func testWritingTheSameTextBackIsNotAnEdit() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Same")
+        draft.beginDrafting()
+        draft.edit("Same")
+        XCTAssertTrue(draft.applyDraft("A generated reply."))
+    }
+
+    func testEditingADraftMakesItYours() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.beginDrafting()
+        draft.applyDraft("A generated reply.")
+        draft.edit("A generated reply, edited.")
+
+        XCTAssertEqual(draft.assist, .idle)
+        XCTAssertNil(draft.undoText)
+    }
+
+    func testEditingClearsAFailure() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.beginDrafting()
+        draft.draftFailed(.rejected)
+        draft.edit("x")
+        XCTAssertEqual(draft.assist, .idle)
+    }
+
+    func testDraftingCannotStartTwice() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        XCTAssertTrue(draft.beginDrafting())
+        XCTAssertFalse(draft.beginDrafting())
+    }
+
+    func testDraftingOnlyStartsWhileEditing() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Thanks!")
+        draft.requestConfirmation()
+        XCTAssertFalse(draft.beginDrafting())
+        XCTAssertEqual(draft.assist, .idle)
+    }
+
+    /// The confirmation shows exactly what will be sent. A draft landing after it opened would
+    /// change the text underneath it.
+    func testADraftCannotLandDuringConfirmation() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Thanks!")
+        draft.beginDrafting()
+        XCTAssertTrue(draft.requestConfirmation())
+        XCTAssertEqual(draft.assist, .idle)
+
+        XCTAssertFalse(draft.applyDraft("A generated reply."))
+        XCTAssertEqual(draft.confirm()?.body, "Thanks!")
+    }
+
+    func testResultsAreIgnoredWhenNotDrafting() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        XCTAssertFalse(draft.applyDraft("Out of nowhere"))
+        draft.draftFailed(.failed)
+        XCTAssertEqual(draft.text, "")
+        XCTAssertEqual(draft.assist, .idle)
+    }
+
+    /// The invariant, restated for the new transitions: no sequence of them publishes anything.
+    func testDraftingNeverReachesSending() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.beginDrafting()
+        draft.applyDraft("A generated reply.")
+        draft.beginDrafting()
+        draft.draftFailed(.failed)
+        draft.undoDraft()
+        draft.beginDrafting()
+        draft.applyDraft("Another.")
+
+        XCTAssertEqual(draft.stage, .editing)
+        XCTAssertNil(draft.confirm())
+    }
 }
 
 /// What can be published, and what the composer says about it while you type.
