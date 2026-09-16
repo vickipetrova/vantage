@@ -1,5 +1,16 @@
 build/
 .build/
+
+# Compiler intermediates. Running swiftc by hand in the repo root drops four of these per source
+# file beside Package.swift; a hundred of them were committed that way once. Build through
+# `swift build` or `build.sh`, which keep everything under .build/.
+*.o
+*.d
+*.dia
+*.swiftdeps
+*.swiftmodule
+*.swiftdoc
+*.swiftsourceinfo
 *.dmg
 .DS_Store
 
