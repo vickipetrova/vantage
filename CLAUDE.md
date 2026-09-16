@@ -17,6 +17,11 @@ There is no Xcode project. `Package.swift` defines the targets; `build.sh` runs
 `swift build -c release --arch arm64 --arch x86_64`, copies the universal binary into a hand-written
 `.app` bundle, writes `Info.plist`, and ad-hoc signs it.
 
+**The app icon** is `assets/Vantage.icon` (Icon Composer), compiled by `scripts/make-icon.sh` into
+`assets/AppIcon/Assets.car` (light, dark, clear, tinted on macOS 26) and `Vantage.icns` (the flat
+fallback for 13–15). Both outputs are committed and `build.sh` only copies them — `actool` needs
+full Xcode, and building must not. Change the `.icon`, rerun the script, commit all three.
+
 Never run `swiftc` by hand in the repo root — it drops `.o`/`.d`/`.dia`/`.swiftdeps` files beside
 `Package.swift`, and a hundred of them were once committed that way. `.gitignore` and CI both refuse
 them now.
@@ -51,6 +56,7 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/ASCReviewsClient.swift` | Reads reviews. Read-only, by type |
 | `Sources/VantageCore/ReviewStore.swift` | TTL cache of reviews — **not** an archive |
 | `Sources/VantageCore/Prefs.swift` | UserDefaults-backed preferences |
+| `Sources/VantageCore/MenuBarTitle.swift` | What the status item shows per style — an icon never hides an error |
 | `Sources/VantageCore/Format.swift` | Currency, unit counts, dates and spans |
 | `Sources/VantageCore/Money.swift` | Per-currency proceeds → one printable figure, honestly |
 | `Sources/VantageCore/OverviewModel.swift` | Everything the Overview section shows, per range |
@@ -72,6 +78,7 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCLI/MCPServer.swift` | MCP over stdio, newline-delimited JSON-RPC |
 | `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → panel, rates, poll timer, wake |
 | `Sources/Vantage/StatusItemController.swift` | Status item: the title, and left/right click |
+| `Sources/Vantage/TowerGlyph.swift` | The menu bar tower, drawn as a template image |
 | `Sources/Vantage/Panel/PanelWindow.swift` | The non-activating `NSPanel` |
 | `Sources/Vantage/Panel/PanelController.swift` | Anchoring, dismissal, size animation, backdrop |
 | `Sources/Vantage/Panel/PanelModel.swift` | What the panel renders; the views read only this |

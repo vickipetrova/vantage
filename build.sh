@@ -40,6 +40,12 @@ echo "Building vantage-cli…"
 swift build -c release --arch arm64 --arch x86_64 --product vantage-cli
 cp "$BIN_PATH/vantage-cli" "build/vantage-cli"
 
+# The app icon, compiled ahead of time by scripts/make-icon.sh from assets/Vantage.icon. Committed
+# rather than compiled here because actool needs full Xcode, and building must not. Assets.car is the
+# layered macOS 26 icon (light, dark, clear, tinted); Vantage.icns is the flat fallback for 13–15.
+cp assets/AppIcon/Assets.car "$APP/Contents/Resources/Assets.car"
+cp assets/AppIcon/Vantage.icns "$APP/Contents/Resources/Vantage.icns"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -52,6 +58,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconName</key><string>Vantage</string>
+  <key>CFBundleIconFile</key><string>Vantage</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
   <key>LSUIElement</key><true/>
   <key>NSAppTransportSecurity</key>

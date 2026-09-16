@@ -19,6 +19,7 @@ public enum Prefs {
         static let manualRateDates = "manualRateDates"
         static let rememberCredentials = "rememberCredentials"
         static let historyDays = "historyDays"
+        static let menuBarStyle = "menuBarStyle"
     }
 
     /// What the menu bar renders money in. Defaults to the currency of the user's region, which is
@@ -130,6 +131,19 @@ public enum Prefs {
             return defaults.bool(forKey: Key.rememberCredentials)
         }
         set { defaults.set(newValue, forKey: Key.rememberCredentials) }
+    }
+
+    /// What the status item shows. Numbers by default — they're why Vantage lives in the menu bar —
+    /// with the tower icon as a choice for a quieter bar.
+    public static var menuBarStyle: MenuBarStyle {
+        get { menuBarStyle(from: defaults.string(forKey: Key.menuBarStyle)) }
+        set { defaults.set(newValue.rawValue, forKey: Key.menuBarStyle) }
+    }
+
+    /// Unknown values fall back rather than failing, so a build that adds a style doesn't strand an
+    /// older one with nothing in its menu bar.
+    static func menuBarStyle(from raw: String?) -> MenuBarStyle {
+        raw.flatMap(MenuBarStyle.init(rawValue:)) ?? .numbers
     }
 
     /// How many days back the app asks Apple for sales reports.
