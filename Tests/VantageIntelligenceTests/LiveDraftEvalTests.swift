@@ -55,6 +55,8 @@ final class LiveDraftEvalTests: XCTestCase {
         Case(name: "Japanese", rating: 5, title: "とても便利",
              body: "売上がすぐに確認できて、毎朝使っています。",
              expect: .draftIn(.japanese)),
+        Case(name: "Japanese title only", rating: 5, title: "とても便利", body: "",
+             expect: .draftIn(.japanese)),
         Case(name: "Polish (unsupported)", rating: 2, title: "Nie działa",
              body: "Aplikacja zawiesza się przy każdym eksporcie raportu do PDF.",
              expect: .unsupportedLanguage),

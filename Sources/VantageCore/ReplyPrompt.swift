@@ -6,10 +6,16 @@ public struct DraftRequest: Equatable, Sendable {
     public let instructions: String
     /// The review, which is untrusted.
     public let prompt: String
+    /// The review's own words, title and body, without the prompt's English labels — what language
+    /// detection reads. On the whole prompt, "Rating", "Title" and "Review" outvote a short review in
+    /// another language. Just as untrusted as `prompt`, and never placed in `instructions`.
+    public let languageSample: String
 
-    public init(instructions: String, prompt: String) {
+    /// A nil `languageSample` falls back to `prompt`.
+    public init(instructions: String, prompt: String, languageSample: String? = nil) {
         self.instructions = instructions
         self.prompt = prompt
+        self.languageSample = languageSample ?? prompt
     }
 }
 
@@ -55,7 +61,14 @@ public enum ReplyPrompt {
 
     public static func request(for review: CustomerReview, appName: String?) -> DraftRequest {
         DraftRequest(instructions: instructions(rating: review.rating, appName: appName),
-                     prompt: prompt(for: review))
+                     prompt: prompt(for: review),
+                     languageSample: languageSample(for: review))
+    }
+
+    static func languageSample(for review: CustomerReview) -> String {
+        [trim(review.title, to: titleLimit), trim(review.body, to: bodyLimit)]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func instructions(rating: Int, appName: String?) -> String {

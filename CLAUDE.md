@@ -213,10 +213,12 @@ request, no key. The spec is `docs/superpowers/specs/2026-09-16-ai-reply-drafts-
   against a review that talks the model into advertising something.
 - **The review's language is detected in code, never left to the instruction alone.**
   `AppleIntelligenceDrafter` runs `NLLanguageRecognizer` — on-device, like the model — over the
-  prompt text and appends a line naming the language ("The review is written in German. Write the
-  reply in German."). It's there because "reply in the same language as the review" on its own came
-  back in English for German and Japanese reviews in evaluation. The recognizer reads
-  `request.prompt`, never `instructions`, so review text still never reaches the instructions.
+  review's title and body and appends a line naming the language ("The review is written in German.
+  Write the reply in German."). It's there because "reply in the same language as the review" on its
+  own came back in English for German and Japanese reviews in evaluation. The recognizer reads
+  `request.languageSample`, never `instructions`, so review text still never reaches the
+  instructions — and not `request.prompt` either, whose English labels made a title-only
+  "とても便利" or a one-word "Bien" read as English.
 - **A draft is just text in the editor.** `ReplyDraft.assist` sits beside `stage` and has no
   transition that touches it, so drafts reach the App Store by the same two steps as typing.
 - **A draft can still break a rule the instructions state.** The live evaluation produced a draft

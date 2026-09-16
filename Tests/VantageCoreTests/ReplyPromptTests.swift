@@ -34,6 +34,28 @@ final class ReplyPromptTests: XCTestCase {
         XCTAssertFalse(request.prompt.contains("GBR"))
     }
 
+    /// Language detection reads this, not the templated prompt, whose English labels outvote a
+    /// short review in another language.
+    func testLanguageSampleIsTheReviewTextAlone() {
+        let request = ReplyPrompt.request(for: review(title: "とても便利", body: "毎朝使っています。"),
+                                          appName: "Vantage")
+        XCTAssertEqual(request.languageSample, "とても便利\n毎朝使っています。")
+        XCTAssertTrue(request.languageSample.contains("とても便利"))
+        XCTAssertTrue(request.languageSample.contains("毎朝使っています。"))
+        XCTAssertFalse(request.languageSample.contains("sam_1987"))
+        XCTAssertFalse(request.languageSample.contains("Rating"))
+        XCTAssertFalse(request.instructions.contains("とても便利"))
+    }
+
+    func testLanguageSampleOfATitleOnlyReviewIsTheTitle() {
+        let request = ReplyPrompt.request(for: review(title: "Bien", body: ""), appName: nil)
+        XCTAssertEqual(request.languageSample, "Bien")
+    }
+
+    func testLanguageSampleFallsBackToThePrompt() {
+        XCTAssertEqual(DraftRequest(instructions: "i", prompt: "p").languageSample, "p")
+    }
+
     func testPromptLayout() {
         let request = ReplyPrompt.request(for: review(), appName: nil)
         XCTAssertEqual(request.prompt, """

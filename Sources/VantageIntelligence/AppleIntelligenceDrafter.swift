@@ -80,12 +80,13 @@ final class AppleIntelligenceDrafter: ReplyDrafter {
 
     /// `ReplyPrompt` already asks for a reply "in the same language as the review", but that line
     /// alone wasn't enough: a German or Japanese review came back in English in evaluation. This
-    /// detects the review's language from `request.prompt` — never `instructions`, which is ours —
-    /// and appends one line naming it when it isn't English, which the model follows far more
-    /// reliably than the generic instruction on its own.
+    /// detects the review's language from `request.languageSample` — the review's own title and
+    /// body, never `instructions`, which is ours — and appends one line naming it when it isn't
+    /// English, which the model follows far more reliably than the generic instruction on its own.
+    /// Not `request.prompt`: its English labels made a short Japanese or French review read as English.
     static func instructions(for request: DraftRequest) -> String {
         let recognizer = NLLanguageRecognizer()
-        recognizer.processString(request.prompt)
+        recognizer.processString(request.languageSample)
         guard let language = recognizer.dominantLanguage, language != .english,
               let name = Locale(identifier: "en").localizedString(forLanguageCode: language.rawValue)
         else { return request.instructions }
