@@ -153,9 +153,16 @@ cp build/vantage-cli ~/.local/bin/
 
 ~/.local/bin/vantage-cli status
 ~/.local/bin/vantage-cli sales --range 7d
+~/.local/bin/vantage-cli sales --from 2026-01-01 --to 2026-03-31
+~/.local/bin/vantage-cli apps --range all
 ~/.local/bin/vantage-cli apps --json | jq '.[0]'
 ~/.local/bin/vantage-cli reviews --limit 5
 ```
+
+A range can be any span Vantage has cached: `--range 90d`, `--days N`, `--range all`, or
+`--from`/`--to`. The app fetches a year of history by default (Settings › General › Data), which is
+as far back as Apple keeps daily reports — and keeps everything it fetches, so the reach grows from
+there. `vantage-cli status` shows the oldest day cached.
 
 `/usr/local/bin` works too and needs `sudo`. Either way, add the directory to your `PATH` if it
 isn't already, and you can drop the prefix.

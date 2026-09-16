@@ -18,6 +18,7 @@ public enum Prefs {
         static let manualRates = "manualRates"
         static let manualRateDates = "manualRateDates"
         static let rememberCredentials = "rememberCredentials"
+        static let historyDays = "historyDays"
     }
 
     /// What the menu bar renders money in. Defaults to the currency of the user's region, which is
@@ -129,6 +130,24 @@ public enum Prefs {
             return defaults.bool(forKey: Key.rememberCredentials)
         }
         set { defaults.set(newValue, forKey: Key.rememberCredentials) }
+    }
+
+    /// How many days back the app asks Apple for sales reports.
+    ///
+    /// Defaults to the full year Apple keeps, because a day not fetched within that year is gone
+    /// for good — and the cost is one request per day, once. Lowering it deletes nothing; it only
+    /// stops reaching further back. Deleting is a separate, explicit action in Settings.
+    public static var historyDays: Int {
+        get { clampedHistoryDays(defaults.object(forKey: Key.historyDays) as? Int) }
+        set { defaults.set(clampedHistoryDays(newValue), forKey: Key.historyDays) }
+    }
+
+    /// What Settings offers. Nothing past Apple's year: those requests could only return 404s.
+    public static let historyChoices = [30, 90, 180, ReportStore.appleRetentionDays]
+
+    static func clampedHistoryDays(_ value: Int?) -> Int {
+        guard let value, value > 0 else { return ReportStore.appleRetentionDays }
+        return min(value, ReportStore.appleRetentionDays)
     }
 
     /// When Vantage last got something out of App Store Connect.

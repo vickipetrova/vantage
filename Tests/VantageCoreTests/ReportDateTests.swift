@@ -115,4 +115,28 @@ final class ReportDateTests: XCTestCase {
         XCTAssertFalse(ReportDate(year: 2026, month: 6, day: 1)
             .mayStillArrive(now: utc("2026-08-03T16:00:00Z")))
     }
+
+    // MARK: - Distance and retention
+
+    func testDaysBetweenCountsCalendarDaysAcrossDaylightSaving() {
+        let before = ReportDate(year: 2026, month: 3, day: 7)
+        // US daylight saving starts 8 Mar 2026; a 23-hour day must still count as one.
+        XCTAssertEqual(before.days(to: ReportDate(year: 2026, month: 3, day: 9)), 2)
+        XCTAssertEqual(before.days(to: before), 0)
+        XCTAssertEqual(ReportDate(year: 2026, month: 3, day: 9).days(to: before), -2)
+        XCTAssertEqual(ReportDate(year: 2025, month: 9, day: 15)
+            .days(to: ReportDate(year: 2026, month: 9, day: 15)), 365)
+    }
+
+    /// Near the end of Apple's year a 404 may mean the report was deleted, not that nothing sold.
+    func testAMissingReportIsOnlyTrustedAsZeroWellInsideApplesRetention() {
+        let now = utc("2026-09-16T19:00:00Z")  // yesterday is 2026-09-15
+        let yesterday = ReportDate(year: 2026, month: 9, day: 15)
+        XCTAssertFalse(yesterday.isTooOldToAssumeZero(now: now))
+        XCTAssertFalse(yesterday.adding(days: -ReportDate.zeroTrustedWithinDays)
+            .isTooOldToAssumeZero(now: now))
+        XCTAssertTrue(yesterday.adding(days: -(ReportDate.zeroTrustedWithinDays + 1))
+            .isTooOldToAssumeZero(now: now))
+    }
+
 }

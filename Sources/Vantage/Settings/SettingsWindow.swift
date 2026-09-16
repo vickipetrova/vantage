@@ -20,6 +20,12 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         get { model.onPreferencesChanged } set { model.onPreferencesChanged = newValue }
     }
 
+    /// Called when the history setting changes, so a wider window starts filling in now rather
+    /// than at the next poll.
+    var onHistoryChanged: (() -> Void)? {
+        get { model.onHistoryChanged } set { model.onHistoryChanged = newValue }
+    }
+
     /// Called when the reviews key or the replies switch changes, so the panel drops a stale state.
     var onReviewsKeyChanged: (() -> Void)? {
         get { model.onReviewsKeyChanged } set { model.onReviewsKeyChanged = newValue }

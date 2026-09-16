@@ -1,10 +1,10 @@
 import SwiftUI
 import VantageCore
 
-/// One app, at the range currently selected on the Overview.
+/// One app, at the days currently selected on the Overview.
 ///
-/// Shares the range with Overview on purpose: clicking into an app while looking at a week and
-/// landing on a single day would silently change the question being asked.
+/// Shares the time window with Overview on purpose: clicking into an app while looking at a week
+/// in March and landing on yesterday would silently change the question being asked.
 struct AppDetailView: View {
     @ObservedObject var model: PanelModel
     let appleID: String
@@ -12,7 +12,7 @@ struct AppDetailView: View {
     private var detail: AppDetailModel {
         AppDetailModel.build(appleID: appleID, days: model.days, rates: model.rates,
                              error: model.error, metrics: model.metrics,
-                             displayCurrency: Prefs.displayCurrency, range: model.range)
+                             displayCurrency: Prefs.displayCurrency, span: model.span)
     }
 
     var body: some View {
@@ -25,9 +25,11 @@ struct AppDetailView: View {
                     if let notFound = detail.notFound {
                         Footnote(text: notFound).card()
                     } else {
-                        RangePicker(model: model)
-                        if let headline = detail.summary.headline {
-                            HeadlineCard(headline: headline)
+                        VStack(alignment: .leading, spacing: Theme.Space.row) {
+                            TimeControls(model: model)
+                            if let headline = detail.summary.headline {
+                                HeadlineCard(headline: headline)
+                            }
                         }
                         TrendCard(model: model, appleID: appleID)
                         reviews

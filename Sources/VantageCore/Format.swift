@@ -180,6 +180,23 @@ public enum Fmt {
         return "\(reportDate(start)) – \(reportDate(end))"
     }
 
+    /// A span that always names its year: "9 Sep – 15 Sep 2026".
+    ///
+    /// For the panel's time stepper. `span` drops a shared year because the Overview only ever
+    /// showed the last month; once you can step back through time, "15 Sep" stops meaning this one.
+    public static func spanWithYear(from start: ReportDate, to end: ReportDate) -> String {
+        guard start != end else { return reportDate(start) }
+        if start.year == end.year {
+            return "\(shortDayFormatter.string(from: start.startOfDay)) – \(reportDate(end))"
+        }
+        return "\(reportDate(start)) – \(reportDate(end))"
+    }
+
+    /// A size on disk, the way Finder writes it: "1.3 MB".
+    public static func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+
     /// A review's date. A real instant rather than a report day, so it stays in the local zone —
     /// unlike everything derived from a sales report, which is Pacific.
     public static func reviewDate(_ date: Date) -> String {

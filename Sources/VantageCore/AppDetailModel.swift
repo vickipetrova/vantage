@@ -23,6 +23,19 @@ public struct AppDetailModel: Equatable {
                              displayCurrency: String,
                              range: OverviewRange = .yesterday,
                              now: Date = Date()) -> AppDetailModel {
+        build(appleID: appleID, days: days, rates: rates, error: error, metrics: metrics,
+              displayCurrency: displayCurrency, span: range.span, now: now)
+    }
+
+    /// Any span — what the panel's time navigation hands in.
+    public static func build(appleID: String,
+                             days: [DaySales],
+                             rates: FXRates?,
+                             error: Error?,
+                             metrics: Set<Metric>,
+                             displayCurrency: String,
+                             span: OverviewModel.Span,
+                             now: Date = Date()) -> AppDetailModel {
         let days = days.sorted { $0.date > $1.date }
         // Newest first, so the first title found is the most recent name Apple used for it.
         let title = days.lazy.compactMap { day in
@@ -31,7 +44,7 @@ public struct AppDetailModel: Equatable {
 
         let summary = OverviewModel.build(days: narrow(days, to: appleID), rates: rates,
                                           error: error, metrics: metrics,
-                                          displayCurrency: displayCurrency, range: range, now: now)
+                                          displayCurrency: displayCurrency, span: span, now: now)
 
         return AppDetailModel(
             appleID: appleID,
@@ -39,7 +52,7 @@ public struct AppDetailModel: Equatable {
             summary: summary,
             notFound: title == nil
                 ? "No cached day mentions this app. It may have been removed from sale, or sold "
-                    + "nothing in the last 30 days."
+                    + "nothing in the days Vantage has fetched."
                 : nil)
     }
 

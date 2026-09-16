@@ -43,8 +43,8 @@ final class CacheQueryTests: XCTestCase {
     /// With nothing cached there is nothing to say, and saying "zero" would be a claim about a
     /// business rather than about a cache.
     func testAnEmptyCacheYieldsNoSalesSnapshot() {
-        XCTAssertNil(query.sales(range: .month))
-        XCTAssertTrue(query.apps(range: .month).isEmpty)
+        XCTAssertNil(query.sales(range: .last(30)))
+        XCTAssertTrue(query.apps(range: .last(30)).isEmpty)
         XCTAssertTrue(query.reviews().isEmpty)
         XCTAssertTrue(query.engagement().isEmpty)
     }
@@ -63,7 +63,7 @@ final class CacheQueryTests: XCTestCase {
         for offset in 0..<3 {
             save(yesterday.adding(days: -offset), units: 10, usd: 5, sales: 8)
         }
-        let snapshot = try! XCTUnwrap(query.sales(range: .week))
+        let snapshot = try! XCTUnwrap(query.sales(range: .last(7)))
 
         XCTAssertEqual(snapshot.to, yesterday.apiString)
         XCTAssertEqual(snapshot.from, yesterday.adding(days: -6).apiString)
@@ -75,7 +75,7 @@ final class CacheQueryTests: XCTestCase {
     /// Without a rate table there is no single number, and a zero would read as "earned nothing".
     func testMoneyIsNilRatherThanZeroWhenNothingCanBeConverted() {
         save(ReportDate.yesterday(), units: 5, usd: 12, sales: 20)
-        let snapshot = try! XCTUnwrap(query.sales(range: .month))
+        let snapshot = try! XCTUnwrap(query.sales(range: .last(30)))
         // No rates file was written in setUp, so nothing is convertible.
         XCTAssertNil(snapshot.proceeds)
         XCTAssertEqual(snapshot.downloads, 5, "but units need no rate and are still reported")
@@ -94,12 +94,63 @@ final class CacheQueryTests: XCTestCase {
 
     func testAppsCarryTheirIdentityAndUnits() {
         save(ReportDate.yesterday(), units: 42, usd: 9)
-        let apps = query.apps(range: .month)
+        let apps = query.apps(range: .last(30))
         XCTAssertEqual(apps.count, 1)
         XCTAssertEqual(apps.first?.appleID, "6478")
         XCTAssertEqual(apps.first?.title, "Vantage")
         XCTAssertEqual(apps.first?.downloads, 42)
         XCTAssertNil(apps.first?.averageRating, "no listing cached, so no rating is invented")
+    }
+
+    // MARK: - Any range
+
+    /// The query layer used to read a fixed 60 days, so anything older was invisible however long
+    /// the app had been collecting it.
+    func testReadsTheWholeCacheNotAFixedWindow() throws {
+        let yesterday = ReportDate.yesterday()
+        save(yesterday, units: 1, usd: 1)
+        save(yesterday.adding(days: -500), units: 7, usd: 1)
+
+        let all = try XCTUnwrap(query.sales(range: .all))
+        XCTAssertEqual(all.downloads, 8)
+        XCTAssertEqual(all.daysCached, 2)
+        XCTAssertEqual(all.daysInRange, 501)
+        XCTAssertEqual(all.from, yesterday.adding(days: -500).apiString)
+        XCTAssertEqual(all.range, "all")
+
+        XCTAssertEqual(query.status().daysCached, 2)
+        XCTAssertEqual(query.status().oldestReport, yesterday.adding(days: -500).apiString)
+    }
+
+    func testExplicitDatesSelectExactlyThoseDays() throws {
+        let yesterday = ReportDate.yesterday()
+        for offset in 0..<100 { save(yesterday.adding(days: -offset), units: 1, usd: 1) }
+        let from = yesterday.adding(days: -60)
+        let to = yesterday.adding(days: -51)
+
+        let snapshot = try XCTUnwrap(query.sales(range: .between(from: from, to: to)))
+        XCTAssertEqual(snapshot.from, from.apiString)
+        XCTAssertEqual(snapshot.to, to.apiString)
+        XCTAssertEqual(snapshot.downloads, 10)
+        XCTAssertEqual(snapshot.daysCached, 10)
+        XCTAssertEqual(snapshot.daysInRange, 10)
+    }
+
+    /// Asking for more than is cached is allowed, and says so rather than implying full coverage.
+    func testALongerRangeThanTheCacheSaysHowMuchIsThere() throws {
+        save(ReportDate.yesterday(), units: 3, usd: 1)
+        let snapshot = try XCTUnwrap(query.sales(range: .last(365)))
+        XCTAssertEqual(snapshot.daysCached, 1)
+        XCTAssertEqual(snapshot.daysInRange, 365)
+        XCTAssertEqual(snapshot.range, "365d")
+    }
+
+    func testAppsFollowTheRangeToo() {
+        let yesterday = ReportDate.yesterday()
+        save(yesterday, units: 1, usd: 1)
+        save(yesterday.adding(days: -200), units: 50, usd: 1)
+        XCTAssertEqual(query.apps(range: .last(7)).first?.downloads, 1)
+        XCTAssertEqual(query.apps(range: .all).first?.downloads, 51)
     }
 
     // MARK: - Everything is Codable
@@ -108,8 +159,8 @@ final class CacheQueryTests: XCTestCase {
     func testEverySnapshotEncodes() throws {
         save(ReportDate.yesterday(), units: 1, usd: 1, sales: 2)
         let encoder = JSONEncoder()
-        XCTAssertNoThrow(try encoder.encode(XCTUnwrap(query.sales(range: .month))))
-        XCTAssertNoThrow(try encoder.encode(query.apps(range: .month)))
+        XCTAssertNoThrow(try encoder.encode(XCTUnwrap(query.sales(range: .last(30)))))
+        XCTAssertNoThrow(try encoder.encode(query.apps(range: .last(30))))
         XCTAssertNoThrow(try encoder.encode(query.reviews()))
         XCTAssertNoThrow(try encoder.encode(query.engagement()))
         XCTAssertNoThrow(try encoder.encode(query.status()))

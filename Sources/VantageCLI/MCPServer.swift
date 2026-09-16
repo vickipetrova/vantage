@@ -66,11 +66,27 @@ struct MCPServer {
         ]
     }
 
+    /// Use one style per call: `range`, `days`, or `from`/`to`. The server refuses a mix rather
+    /// than choosing, and says why.
     private static let rangeProperty: [String: Any] = [
         "range": [
             "type": "string",
-            "enum": ["1d", "7d", "30d"],
-            "description": "Reporting window. 1d is Apple's most recent published day. Default 30d.",
+            "description": "Window ending at the newest cached day: 1d (Apple's most recent "
+                + "published day), 7d, 30d, any Nd such as 90d or 365d, or all for everything "
+                + "cached. Default 30d. Use get_status to see how far back the cache goes.",
+        ],
+        "days": [
+            "type": "integer",
+            "description": "Same as range, as a number: the N days ending at the newest cached day.",
+        ],
+        "from": [
+            "type": "string",
+            "description": "First day, YYYY-MM-DD, Pacific report day. Combine with to, or omit to "
+                + "for everything after it.",
+        ],
+        "to": [
+            "type": "string",
+            "description": "Last day, YYYY-MM-DD, inclusive. Omit from for everything up to it.",
         ],
     ]
 
@@ -100,7 +116,8 @@ struct MCPServer {
              + "until Apple has generated a report, which takes 24–48 hours after first request.",
              appProperty),
         tool("get_status",
-             "How current the cached data is: the newest report date, how many days are cached, "
+             "How current the cached data is: the newest and oldest report dates, how many days "
+             + "are cached, "
              + "the display currency, and how many apps have reviews cached. Call this first if a "
              + "figure looks stale or missing."),
     ]
@@ -111,23 +128,37 @@ struct MCPServer {
         let name = params["name"] as? String ?? ""
         let arguments = params["arguments"] as? [String: Any] ?? [:]
 
-        func range() -> OverviewRange {
-            switch (arguments["range"] as? String)?.lowercased() {
-            case "1d": return .yesterday
-            case "7d": return .week
-            default: return .month
+        /// Clients send `days` as a number or, sometimes, a string. Either reaches the same parser,
+        /// so 90.5 is refused there rather than rounded here.
+        func text(_ key: String) -> String? {
+            switch arguments[key] {
+            case let string as String: return string
+            case let number as NSNumber: return number.stringValue
+            default: return nil
             }
+        }
+        func range() throws -> QueryRange {
+            try QueryRange.parse(range: text("range"), days: text("days"),
+                                 from: text("from"), to: text("to"))
         }
         let appleID = arguments["appleID"] as? String
 
         switch name {
         case "get_sales":
-            guard let snapshot = query.sales(range: range()) else {
-                return respondText(id: id, "No reports are cached yet.")
+            do {
+                guard let snapshot = query.sales(range: try range()) else {
+                    return respondText(id: id, "No reports are cached yet.")
+                }
+                respondJSON(id: id, snapshot)
+            } catch {
+                respondToolError(id: id, "\(error)")
             }
-            respondJSON(id: id, snapshot)
         case "get_apps":
-            respondJSON(id: id, query.apps(range: range()))
+            do {
+                respondJSON(id: id, query.apps(range: try range()))
+            } catch {
+                respondToolError(id: id, "\(error)")
+            }
         case "get_reviews":
             let limit = (arguments["limit"] as? Int) ?? 20
             respondJSON(id: id, query.reviews(appleID: appleID, limit: limit))
@@ -153,6 +184,12 @@ struct MCPServer {
 
     private func respondText(id: Any, _ text: String) {
         respond(id: id, result: ["content": [["type": "text", "text": text]]])
+    }
+
+    /// A tool-level failure, per MCP: a result with `isError`, not a JSON-RPC error. The model
+    /// reads it and can correct its arguments; a protocol error is for the client, not the model.
+    private func respondToolError(id: Any, _ text: String) {
+        respond(id: id, result: ["content": [["type": "text", "text": text]], "isError": true])
     }
 
     private func respond(id: Any, result: [String: Any]) {

@@ -61,6 +61,7 @@ final class PanelController: NSObject {
         window = panel
 
         anchor(panel, to: button)
+        model.resetTime()
         // Key, but not active: `orderFrontRegardless` plus a non-activating panel means the text
         // fields inside can be typed into while the user's own app stays frontmost.
         panel.makeKeyAndOrderFront(nil)

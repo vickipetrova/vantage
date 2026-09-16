@@ -12,6 +12,10 @@ public struct ReportStore {
     private let directory: URL
     private let fileManager = FileManager.default
 
+    /// Apple deletes daily reports after one year. The furthest back a fetch can reach — anything
+    /// older exists only in this cache.
+    public static let appleRetentionDays = 365
+
     public static var defaultDirectory: URL {
         URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/Vantage", isDirectory: true)
@@ -45,6 +49,39 @@ public struct ReportStore {
 
     public func loadAll(_ dates: [ReportDate]) -> [DaySales] {
         dates.compactMap { load($0) }
+    }
+
+    /// Every date with a file on disk, oldest first. Names only — a corrupt file is still listed,
+    /// and `load` is what decides it's unusable.
+    public func cachedDates() -> [ReportDate] {
+        guard let names = try? fileManager.contentsOfDirectory(atPath: directory.path) else {
+            return []
+        }
+        return names.compactMap { name in
+            name.hasSuffix(".json") ? ReportDate(apiString: String(name.dropLast(5))) : nil
+        }.sorted()
+    }
+
+    /// Everything cached, however old. For reads that aren't bounded by a display window — the
+    /// CLI, and what Settings says is on disk.
+    public func loadAllCached() -> [DaySales] {
+        loadAll(cachedDates())
+    }
+
+    /// Bytes under the cache directory, subdirectories included — analytics, reviews and icons live
+    /// there too, and the figure in Settings is what the whole cache costs.
+    public func bytesOnDisk() -> Int64 {
+        guard let walker = fileManager.enumerator(
+            at: directory, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey])
+        else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in walker {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+                  values.isRegularFile == true
+            else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
     }
 
     /// Whether this date still needs fetching.
@@ -87,14 +124,14 @@ public struct ReportStore {
         try? fileManager.removeItem(at: url(for: date))
     }
 
-    /// Apple keeps daily reports for one year. Anything older can never be re-fetched, so pruning
-    /// past the window Vantage displays is safe but permanent — kept generous on purpose.
-    public func prune(keepingSince cutoff: ReportDate) {
-        guard let names = try? fileManager.contentsOfDirectory(atPath: directory.path) else { return }
-        for name in names where name.hasSuffix(".json") {
-            guard let date = ReportDate(apiString: String(name.dropLast(5))), date < cutoff
-            else { continue }
-            forget(date)
-        }
+    /// Deletes every day before `cutoff` and says how many went.
+    ///
+    /// Only ever called because the user asked. Apple keeps daily reports for one year, so past
+    /// that a pruned day can never be fetched again — nothing in Vantage prunes on its own.
+    @discardableResult
+    public func prune(keepingSince cutoff: ReportDate) -> Int {
+        let doomed = cachedDates().filter { $0 < cutoff }
+        doomed.forEach(forget)
+        return doomed.count
     }
 }

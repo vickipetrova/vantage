@@ -13,20 +13,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let backfill: Backfill
 
     private var rates: FXRates?
+    /// Every cached day, in memory. The panel can step back through the whole history, so it's
+    /// handed all of it — read from disk once, then kept current as the backfill lands each day,
+    /// rather than re-reading a year of files for every day that arrives.
+    private var cache: [ReportDate: DaySales] = [:]
     private var pollTimer: Timer?
     private var isFetching = false
 
-    /// How far back the first run *fetches*. Enough for the 7- and 30-day rows and no further;
-    /// Apple keeps daily reports for a year, so a wider net is possible but pointless.
-    private static let backfillDays = 30
-
-    /// How far back the panel *reads from disk*. Wider than the backfill on purpose and free —
-    /// this is a cache read, not a request.
-    ///
-    /// Without it the "vs previous 30 days" comparison could never appear: rendering loaded exactly
-    /// thirty days, so the thirty days before them were never in hand and the comparison was
-    /// structurally dead. Days accumulate as the app runs, so it fills in on its own.
-    private static let renderDays = 60
+    /// The recent stretch that decides which currencies Settings offers a manual rate for, and
+    /// what the scheduler treats as newest. The panel itself gets the whole cache.
+    private static let recentDays = 60
 
     override init() {
         backfill = Backfill(provider: ASCClient(), store: ReportStore())
@@ -52,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
         settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
         settingsWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
+        // Not user-initiated: a wider window should fill in, not re-ask about assumed zeros.
+        settingsWindow.onHistoryChanged = { [weak self] in self?.refresh(userInitiated: false) }
         settingsWindow.unpricedCurrencies = { [weak self] in self?.unpricedCurrencies() ?? [] }
         settingsWindow.testConnection = { [weak self] completion in
             self?.testConnection(completion) }
@@ -60,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Whatever's on disk, so the first render isn't blank — with the user's own rates for any
         // currency nothing publishes one for.
         rates = fx.cached()?.applying(manualRates: Prefs.manualRates)
+        reloadCache()
 
         // Registered before the credentials guard: a first-launch user who sets up credentials in
         // the window this guard opens would otherwise get no wake refresh for the whole session.
@@ -93,6 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.requestAuthorizationIfNeeded()
         // A changed manual rate re-prices everything on screen without refetching anything.
         rates = rates?.applying(manualRates: Prefs.manualRates)
+        // Settings can delete cached days, and that arrives here too.
+        reloadCache()
         render()
     }
 
@@ -103,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func unpricedCurrencies() -> [String] {
         guard let rates else { return [] }
         var codes: Set<String> = []
-        for day in store.loadAll(renderWindow) {
+        for day in recent {
             for (code, amount) in day.proceeds where amount != 0 {
                 // `needsUserRate`, not `canConvert`: a built-in estimate makes a currency
                 // convertible, and that is precisely when a real rate is most worth asking for.
@@ -116,14 +117,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Rendering
 
     /// The dates to fetch.
-    private var fetchWindow: [ReportDate] { ReportDate.yesterday().lastDays(Self.backfillDays) }
-    /// The dates to render from cache.
-    private var renderWindow: [ReportDate] { ReportDate.yesterday().lastDays(Self.renderDays) }
+    ///
+    /// `Prefs.historyDays`, a year by default. Apple deletes daily reports after that, and the CLI
+    /// answers questions about any stretch of the cache — so a day not fetched within the year is
+    /// a day no one can ask about, ever. Only missing days are requested, so after the first run
+    /// this is one or two requests a day however wide it is.
+    private var fetchWindow: [ReportDate] { ReportDate.yesterday().lastDays(Prefs.historyDays) }
+    /// Cached days within `recentDays`.
+    private var recent: [DaySales] {
+        let from = ReportDate.yesterday().adding(days: -(Self.recentDays - 1))
+        return cache.values.filter { $0.date >= from }
+    }
 
-    /// Renders from disk. Instant, offline, and the reason a relaunch or a metric toggle doesn't
-    /// wait on the network.
+    private func reloadCache() {
+        cache = Dictionary(store.loadAllCached().map { ($0.date, $0) },
+                           uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Renders from the in-memory cache. Instant, offline, and the reason a relaunch or a metric
+    /// toggle doesn't wait on the network.
     private func render(error: Error? = nil) {
-        let days = store.loadAll(renderWindow)
+        let days = Array(cache.values)
         statusItemController.update(days: days, rates: rates, error: error)
         panelModel.update(days: days, rates: rates, error: error)
     }
@@ -172,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               onDay: { day in
                 DispatchQueue.main.async {
                     // Days land independently, so the menu fills in as they arrive.
+                    self.cache[day.date] = day
                     self.render()
                     Notifier.announce(day, rates: self.rates)
                 }
@@ -222,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window the answer cannot change, so asking is pure noise.
     private func reschedule() {
         pollTimer?.invalidate()
-        let newest = store.loadAll(renderWindow).map(\.date).max()
+        let newest = cache.keys.max()
         let next = Schedule.nextPoll(newestCached: newest)
 
         let timer = Timer(fireAt: next, interval: 0, target: self,

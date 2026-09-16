@@ -19,19 +19,19 @@ enum CLI {
         arguments.removeFirst()
 
         let json = arguments.contains("--json")
-        let range = parseRange(arguments)
         let query = CacheQuery()
 
         switch command {
         case "sales":
+            let range = parseRange(arguments)
             guard let snapshot = query.sales(range: range) else {
                 fail("No reports cached yet. Open Vantage and let it fetch.")
             }
             json ? emit(snapshot) : printSales(snapshot)
 
         case "apps":
-            let apps = query.apps(range: range)
-            json ? emit(apps) : printApps(apps, range: range)
+            let apps = query.apps(range: parseRange(arguments))
+            json ? emit(apps) : printApps(apps)
 
         case "reviews":
             let reviews = query.reviews(appleID: value(of: "--app", in: arguments),
@@ -65,14 +65,16 @@ enum CLI {
         return arguments[index + 1]
     }
 
-    private static func parseRange(_ arguments: [String]) -> OverviewRange {
-        switch value(of: "--range", in: arguments)?.lowercased() {
-        case "1d", "yesterday", "day": return .yesterday
-        case "7d", "week": return .week
-        case "30d", "month": return .month
-        // Defaults to the widest, because a question asked without a range is almost always
-        // "how am I doing" rather than "what happened yesterday".
-        default: return .month
+    /// Parsed only by the commands that take a range, so a stray `--days` on `reviews` isn't an
+    /// error about something that command never reads.
+    private static func parseRange(_ arguments: [String]) -> QueryRange {
+        do {
+            return try QueryRange.parse(range: value(of: "--range", in: arguments),
+                                        days: value(of: "--days", in: arguments),
+                                        from: value(of: "--from", in: arguments),
+                                        to: value(of: "--to", in: arguments))
+        } catch {
+            fail("\(error)")
         }
     }
 
@@ -102,7 +104,7 @@ enum CLI {
         }
     }
 
-    private static func printApps(_ apps: [CacheQuery.AppSnapshot], range: OverviewRange) {
+    private static func printApps(_ apps: [CacheQuery.AppSnapshot]) {
         guard !apps.isEmpty else { return print("No apps cached yet.") }
         let currency = Prefs.displayCurrency
         for app in apps {
@@ -146,6 +148,7 @@ enum CLI {
     private static func printStatus(_ status: CacheQuery.StatusSnapshot) {
         print("  \(status.headline)")
         print("  newest report   \(status.newestReport ?? "none")")
+        print("  oldest report   \(status.oldestReport ?? "none")")
         print("  days cached     \(status.daysCached)")
         print("  currency        \(status.displayCurrency)")
         print("  ECB rates       \(status.ratesPublished ?? "none cached")")
@@ -161,7 +164,13 @@ enum CLI {
     vantage-cli — read what the Vantage app has already fetched. Read-only: no credentials, no network.
 
     USAGE
-      vantage-cli <command> [--range 1d|7d|30d] [--json]
+      vantage-cli <command> [range] [--json]
+
+    RANGE  (sales and apps; one style at a time, default 30d)
+      --range 1d|7d|30d|90d|…|all   days ending at the newest cached day, or everything cached
+      --days N                      the same, as a number
+      --from YYYY-MM-DD --to YYYY-MM-DD
+                                    Pacific report days, inclusive; either end may be left off
 
     COMMANDS
       sales       Proceeds, gross sales and downloads for a range
@@ -173,6 +182,8 @@ enum CLI {
 
     EXAMPLES
       vantage-cli sales --range 7d
+      vantage-cli sales --from 2026-01-01 --to 2026-03-31
+      vantage-cli apps --range all
       vantage-cli apps --json | jq '.[0]'
       vantage-cli reviews --limit 5
 

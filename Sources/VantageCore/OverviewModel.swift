@@ -44,7 +44,30 @@ public enum OverviewRange: String, CaseIterable, Sendable {
     }
 }
 
+extension OverviewRange {
+    /// The same window as an `OverviewModel.Span`, ending at the newest cached day.
+    public var span: OverviewModel.Span { .init(title: label, length: days) }
+}
+
 public struct OverviewModel: Equatable {
+    /// The days a headline covers: `length` days ending at `end`.
+    ///
+    /// The panel only ever uses its three `OverviewRange`s. The CLI and MCP ask for any length
+    /// ending on any date, through `QueryRange` — and go through this same arithmetic rather than a
+    /// second copy of it that would drift.
+    public struct Span: Equatable, Sendable {
+        public let title: String
+        public let length: Int
+        /// `nil` means the newest cached day.
+        public let end: ReportDate?
+
+        public init(title: String, length: Int, end: ReportDate? = nil) {
+            self.title = title
+            self.length = max(1, length)
+            self.end = end
+        }
+    }
+
     /// Yesterday's figures, and what qualifies them.
     public struct Headline: Equatable {
         /// "Yesterday", "Last 7 days"…
@@ -104,6 +127,21 @@ public struct OverviewModel: Equatable {
                              displayCurrency: String,
                              range: OverviewRange = .yesterday,
                              now: Date = Date()) -> OverviewModel {
+        build(days: days, rates: rates, error: error, metrics: metrics,
+              displayCurrency: displayCurrency, span: range.span, now: now)
+    }
+
+    /// - Parameters:
+    ///   - days: newest first.
+    ///   - span: what the headline and the app rows cover.
+    ///   - now: injected so the "fetched at" and "checked at" strings are testable.
+    public static func build(days: [DaySales],
+                             rates: FXRates?,
+                             error: Error?,
+                             metrics: Set<Metric>,
+                             displayCurrency: String,
+                             span: Span,
+                             now: Date = Date()) -> OverviewModel {
         let days = days.sorted { $0.date > $1.date }
 
         func money(_ proceeds: [String: Decimal]) -> MoneyText {
@@ -126,8 +164,8 @@ public struct OverviewModel: Equatable {
         // `Backfill` deliberately carries on past them. With a hole inside the window, taking the
         // first seven *entries* reaches back past the range and totals days the label doesn't
         // cover. That produced $5,020 under a heading reading "Aug 13 – Aug 19".
-        let end = latest.date
-        let start = end.adding(days: -(range.days - 1))
+        let end = span.end ?? latest.date
+        let start = end.adding(days: -(span.length - 1))
         let window = days.filter { $0.date >= start && $0.date <= end }
         let units = Metric.units(in: window, metrics: metrics)
         let total = money(sum(window))
@@ -138,19 +176,19 @@ public struct OverviewModel: Equatable {
         let grossTotal = knowsSales ? money(sumSales(window)) : nil
 
         let headline = Headline(
-            title: range.label,
+            title: span.title,
             dateLabel: Fmt.span(from: start, to: end),
             money: total,
             sales: grossTotal,
             units: units,
             unitsLabel: Fmt.downloadsWithArrow(units),
-            comparison: comparison(range: range, days: days, end: end, units: units,
+            comparison: comparison(length: span.length, days: days, end: end, units: units,
                                    metrics: metrics),
-            coverage: window.count < range.days
-                ? "\(window.count) of \(range.days) days cached" : nil,
+            coverage: window.count < span.length
+                ? "\(window.count) of \(span.length) days cached" : nil,
             // Only meaningful for a single day. Across a week, one guessed day among seven doesn't
             // make the total a guess, and saying so would overstate it.
-            assumedZeroNote: range == .yesterday && latest.origin == .assumedZero
+            assumedZeroNote: span.length == 1 && window.first?.origin == .assumedZero
                 ? "No report published — recorded as zero" : nil)
 
         // MARK: Apps
@@ -286,24 +324,24 @@ public struct OverviewModel: Equatable {
     ///
     /// A single day is still measured against the seven before it rather than the one before it —
     /// day against day is mostly weekday-versus-weekend noise.
-    private static func comparison(range: OverviewRange, days: [DaySales], end: ReportDate,
+    private static func comparison(length: Int, days: [DaySales], end: ReportDate,
                                    units: Decimal, metrics: Set<Metric>) -> String? {
-        let length = range == .yesterday ? 7 : range.days
+        let baselineLength = length == 1 ? 7 : length
         // The window immediately before this one, by date.
-        let previousEnd = end.adding(days: -range.days)
-        let previousStart = previousEnd.adding(days: -(length - 1))
+        let previousEnd = end.adding(days: -length)
+        let previousStart = previousEnd.adding(days: -(baselineLength - 1))
         let previous = days.filter { $0.date >= previousStart && $0.date <= previousEnd }
         guard !previous.isEmpty else { return nil }
 
         let baseline = Metric.units(in: previous, metrics: metrics) / Decimal(previous.count)
 
         // The current side is averaged the same way, so both are per-day figures.
-        let start = end.adding(days: -(range.days - 1))
+        let start = end.adding(days: -(length - 1))
         let current = days.filter { $0.date >= start && $0.date <= end }
         guard !current.isEmpty else { return nil }
         let value = units / Decimal(current.count)
 
-        let label = range == .yesterday ? "7-day average" : "previous \(range.days) days"
+        let label = length == 1 ? "7-day average" : "previous \(length) days"
         // Named, because this line sits under a money figure and measures units.
         return "Downloads vs \(label): \(Fmt.change(from: baseline, to: value))"
     }

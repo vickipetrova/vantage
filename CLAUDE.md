@@ -51,6 +51,7 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/Money.swift` | Per-currency proceeds → one printable figure, honestly |
 | `Sources/VantageCore/OverviewModel.swift` | Everything the Overview section shows, per range |
 | `Sources/VantageCore/Trend.swift` | Chart series: gaps, normalization, negatives |
+| `Sources/VantageCore/TimeWindow.swift` | Which days the panel shows — stepping, panning, custom ranges, clamping |
 | `Sources/VantageCore/AppDetailModel.swift` | One app's slice, narrowed then handed to `OverviewModel` |
 | `Sources/VantageCore/ReplyDraft.swift` | Where confirm-before-send is enforced, as a state machine |
 | `Sources/VantageCore/ASCReviewsWriter.swift` | The only type that can publish a reply |
@@ -60,6 +61,8 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/AnalyticsStore.swift` | Merging archive, and how many instances a refresh needs |
 | `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
 | `Sources/VantageCore/CacheQuery.swift` | Read-only answers about the cache, for the CLI and MCP |
+| `Sources/VantageCore/QueryRange.swift` | Any span of days the CLI and MCP ask for — parsed strictly, resolved against the cache |
+| `Sources/VantageCore/CacheRetention.swift` | What's cached, and deleting the older part of it — only when the user asks |
 | `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on every host |
 | `Sources/VantageCLI/main.swift` | `vantage-cli` — subcommands over `CacheQuery` |
 | `Sources/VantageCLI/MCPServer.swift` | MCP over stdio, newline-delimited JSON-RPC |
@@ -70,6 +73,8 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/Vantage/Panel/PanelModel.swift` | What the panel renders; the views read only this |
 | `Sources/Vantage/Panel/OverviewView.swift` | The Overview section |
 | `Sources/Vantage/Panel/TrendChart.swift` | The chart, drawn with `Path` |
+| `Sources/Vantage/Panel/TimeControls.swift` | 1D/7D/30D/Custom, the ‹ date › stepper, the inline custom range |
+| `Sources/Vantage/Panel/ChartPanSurface.swift` | Drag and two-finger swipe on the chart, as whole days |
 | `Sources/Vantage/Panel/ReviewsView.swift` | Reviews, portfolio-wide or per app |
 | `Sources/Vantage/Panel/ReplyComposer.swift` | The composer and the confirmation sheet |
 | `Sources/Vantage/SettingsWindow.swift` | Credentials and preferences, programmatic AppKit |
@@ -129,6 +134,11 @@ which is what that mistake looks like when you make it.
 The target is `VantageCLI` producing a product named `vantage-cli`, **not** `vantage`: macOS
 filesystems are case-insensitive by default, so a `vantage` binary and the app's `Vantage` binary
 are the same path and the link step collides.
+
+**Ranges are any span of the cache**, through `QueryRange`: `--range 90d`, `--days N`, `--range all`,
+`--from`/`--to`. `CacheQuery` reads every cached day, not a window. Parsing refuses anything it
+doesn't recognise — it used to read an unknown range as 30 days, which answers a question nobody
+asked. `CacheRetention` deletes files and must never be reachable from this target.
 
 MCP's stdio transport is newline-delimited JSON-RPC, so **nothing may be written to stdout that
 isn't a message.** A stray `print` corrupts the stream and the client drops the connection.
@@ -213,8 +223,14 @@ The traps that cost real time here, all of which have tests:
 - **A 404 is ambiguous.** Apple only generates a report when at least one unit sold, so a missing
   report means either "not published yet" or "genuinely zero". Resolved by the clock: before 10:00
   PT it's pending; after, it's cached as `.assumedZero`. **Refresh Now re-fetches `.assumedZero`
-  days** — that's the escape hatch for a late report. `.observed` days are immutable and never
-  re-fetched, by anything.
+  days** within `Backfill.lateReportWindowDays` (30) — that's the escape hatch for a late report,
+  and re-asking about a whole year of zeros would make one click hundreds of requests. `.observed`
+  days are immutable and never re-fetched, by anything.
+- **History is a setting, a year by default** (`Prefs.historyDays`), because Apple deletes daily
+  reports after a year and a day never fetched is a day the CLI can never answer about. Near that
+  edge a 404 may mean *deleted* rather than *zero*, so past `ReportDate.zeroTrustedWithinDays` (330)
+  a 404 is left uncached instead of frozen as a zero. Nothing deletes cached days except the button
+  in Settings.
 - **Refunds are negative Units with positive per-unit proceeds**, so `Units × Developer Proceeds` is
   already correct. Never take an absolute value; never floor downloads at zero.
 - **In-app purchases carry their own Apple Identifier** and name their app only through
@@ -259,6 +275,13 @@ app can't hold first responder for typing without `NSApp.activate(ignoringOtherA
 Vantage frontmost just to read a number — unacceptable, and fatal for the review reply composer
 planned in v0.2. `.nonactivatingPanel` plus `canBecomeKey` takes keyboard without activating. The
 cost is that anchoring, click-outside dismissal and Esc are hand-written in `PanelController`.
+
+**Moving through time.** The panel holds the whole cache in memory and one `TimeWindow`, shared
+by Overview and App detail. Opening the panel resets it to Latest (`PanelModel.resetTime`); the
+preset is remembered, the position isn't. Custom dates are an inline row, **not a popover** — a
+popover is its own window, and the click-outside monitor would close the panel on the first click
+into a date field. Chart panning is an AppKit overlay because SwiftUI on macOS 13 can't read a
+horizontal scroll.
 
 Two things there that were found the hard way:
 

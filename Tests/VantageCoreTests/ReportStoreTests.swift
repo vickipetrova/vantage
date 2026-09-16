@@ -166,4 +166,58 @@ final class ReportStoreTests: XCTestCase {
     func testPruningAnEmptyDirectoryDoesntCrash() {
         store.prune(keepingSince: date)
     }
+
+    // MARK: - The whole cache
+
+    func testCachedDatesAreEveryDayOnDiskOldestFirst() throws {
+        for offset in [0, 400, 3] { store.save(day(date.adding(days: -offset))) }
+        try Data("keep me".utf8).write(to: directory.appendingPathComponent("notes.txt"))
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("fx-rates.json"))
+
+        XCTAssertEqual(store.cachedDates(),
+                       [date.adding(days: -400), date.adding(days: -3), date])
+    }
+
+    /// The CLI used to read a fixed 60 days; everything cached is now in reach.
+    func testLoadAllCachedReachesPastAnyWindow() {
+        store.save(day(date))
+        store.save(day(date.adding(days: -700)))
+        XCTAssertEqual(store.loadAllCached().count, 2)
+    }
+
+    func testPruneSaysHowManyDaysItRemoved() {
+        for offset in 0..<5 { store.save(day(date.adding(days: -offset))) }
+        XCTAssertEqual(store.prune(keepingSince: date.adding(days: -2)), 2)
+        XCTAssertEqual(store.prune(keepingSince: date.adding(days: -2)), 0)
+    }
+
+    func testSizeOnDiskCountsSubdirectories() throws {
+        store.save(day(date))
+        let top = store.bytesOnDisk()
+        let nested = directory.appendingPathComponent("analytics", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data(repeating: 0, count: 5000).write(to: nested.appendingPathComponent("1.json"))
+        XCTAssertGreaterThanOrEqual(store.bytesOnDisk(), top + 5000)
+    }
+
+    func testSizeOfAMissingDirectoryIsZero() {
+        XCTAssertEqual(store.bytesOnDisk(), 0)
+    }
+
+    // MARK: - History setting
+
+    func testHistoryDaysDefaultsToApplesFullYear() {
+        XCTAssertEqual(Prefs.clampedHistoryDays(nil), ReportStore.appleRetentionDays)
+    }
+
+    /// Asking Apple for more than it keeps only produces 404s — which, near the edge, are exactly
+    /// the ones that can't be trusted as zero.
+    func testHistoryDaysNeverExceedsApplesRetention() {
+        XCTAssertEqual(Prefs.clampedHistoryDays(90), 90)
+        XCTAssertEqual(Prefs.clampedHistoryDays(5000), ReportStore.appleRetentionDays)
+        XCTAssertEqual(Prefs.clampedHistoryDays(0), ReportStore.appleRetentionDays)
+        XCTAssertEqual(Prefs.clampedHistoryDays(-1), ReportStore.appleRetentionDays)
+        XCTAssertTrue(Prefs.historyChoices.allSatisfy { $0 <= ReportStore.appleRetentionDays })
+    }
+
 }

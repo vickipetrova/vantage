@@ -61,6 +61,35 @@ public struct ReportDate: Hashable, Comparable, Codable, CustomStringConvertible
     /// The instant this report day begins, 00:00 Pacific.
     public var startOfDay: Date { pacificTime(hour: 0) }
 
+    /// Calendar days from this date to `other` — negative when `other` is earlier.
+    ///
+    /// Counted by the Pacific calendar, never by dividing seconds: the day daylight saving starts
+    /// is 23 hours long, and `interval / 86_400` rounds it into the day before.
+    public func days(to other: ReportDate) -> Int {
+        Self.calendar.dateComponents([.day], from: startOfDay, to: other.startOfDay).day ?? 0
+    }
+
+    /// The date a date picker shows, read as a report day.
+    ///
+    /// By components, never by instant: a picker's value is local midnight, which is the previous
+    /// Pacific day for most of the world. The calendar is a parameter so that's testable.
+    public init(calendarDate: Date, calendar: Calendar = .current) {
+        let parts = calendar.dateComponents([.year, .month, .day], from: calendarDate)
+        self.init(year: parts.year ?? 1970, month: parts.month ?? 1, day: parts.day ?? 1)
+    }
+
+    /// This report day as a date a date picker can show — noon in `calendar`, clear of any
+    /// daylight-saving hour.
+    public func calendarDate(in calendar: Calendar = .current) -> Date {
+        calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12)) ?? startOfDay
+    }
+
+    /// Whether this is a real calendar day. `init(apiString:)` accepts 2026-02-30, because it
+    /// only ever reads names Vantage wrote itself; input typed by a person or an agent needs this.
+    public var isValidCalendarDay: Bool {
+        ReportDate(pacificDayContaining: pacificTime(hour: 12)) == self
+    }
+
     /// The instant it becomes `hour`:00 Pacific on this report day.
     ///
     /// Built from calendar components rather than by adding `hour * 3600` to midnight: on the two
@@ -131,5 +160,18 @@ extension ReportDate {
     /// Whether a missing report for this date should still be read as "not published yet".
     public func mayStillArrive(now: Date = Date()) -> Bool {
         now < adding(days: 1).pacificTime(hour: Self.assumeZeroAfterPacificHour)
+    }
+
+    /// How far back a missing report is still trusted to mean "nothing sold".
+    ///
+    /// Apple deletes daily reports after a year and doesn't document what a request for a deleted
+    /// one returns. If it's the same 404, recording a zero would replace a day that earned money
+    /// with a permanent, plausible-looking nothing — and past the year there's no copy left to
+    /// correct it from. A month's margin inside the year keeps the guess well away from that edge.
+    public static let zeroTrustedWithinDays = 330
+
+    /// Whether a missing report for this date is too near Apple's deletion to be read as a zero.
+    public func isTooOldToAssumeZero(now: Date = Date()) -> Bool {
+        days(to: ReportDate.yesterday(now: now)) > Self.zeroTrustedWithinDays
     }
 }

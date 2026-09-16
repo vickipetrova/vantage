@@ -314,6 +314,38 @@ final class AnalyticsStoreTests: XCTestCase {
         XCTAssertEqual(merged.first?.impressions, 1000)
         XCTAssertEqual(merged.first?.pageViews, 100)
     }
+
+
+    // MARK: - Pruning
+
+    func testPruneDropsOnlyOlderDaysAndKeepsTheFile() {
+        store.merge([day(1, impressions: 1), day(2, impressions: 2), day(3, impressions: 3)],
+                    for: "6478")
+        let removed = store.prune(keepingSince: ReportDate(year: 2026, month: 8, day: 2))
+        XCTAssertEqual(removed, 1)
+        XCTAssertEqual(store.load("6478")?.map(\.date.day), [2, 3])
+    }
+
+    /// Pruning is not a fetch. Resetting `fetchedAt` would tell the refresh logic the archive is
+    /// fresh and skip the next real fetch.
+    func testPruneDoesNotResetFreshness() {
+        let then = Date(timeIntervalSince1970: 1_800_000_000)
+        store.merge([day(1, impressions: 1), day(9, impressions: 9)], for: "6478", now: then)
+        store.prune(keepingSince: ReportDate(year: 2026, month: 8, day: 5))
+        XCTAssertEqual(store.instancesNeeded("6478", now: then.addingTimeInterval(10 * 86_400)),
+                       10 + AnalyticsStore.revisionOverlap)
+    }
+
+    func testCachedDatesAreDistinctAcrossApps() {
+        store.merge([day(1, impressions: 1), day(2, impressions: 1)], for: "6478")
+        store.merge([day(2, impressions: 1), day(3, impressions: 1)], for: "9999")
+        XCTAssertEqual(store.cachedDates().count, 3)
+    }
+
+    func testPruningAnEmptyArchiveDoesntCrash() {
+        XCTAssertEqual(store.prune(keepingSince: ReportDate(year: 2026, month: 8, day: 1)), 0)
+        XCTAssertTrue(store.cachedDates().isEmpty)
+    }
 }
 
 /// Which of the three things to do about an app's report requests.

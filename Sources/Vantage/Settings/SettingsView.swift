@@ -218,6 +218,8 @@ private struct GeneralTab: View {
                 }
             }
 
+            DataSection(model: model)
+
             Section {
                 Toggle("Notify me when a new report lands", isOn: $model.morningNotification)
                 Toggle("Launch at login", isOn: Binding(
@@ -233,6 +235,58 @@ private struct GeneralTab: View {
 }
 
 // MARK: - Pieces
+
+/// How far back to fetch, what's on disk, and deleting the older part of it.
+private struct DataSection: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        Section {
+            Picker("History to fetch", selection: $model.historyDays) {
+                ForEach(Prefs.historyChoices, id: \.self) { days in
+                    Text(Self.label(days)).tag(days)
+                }
+            }
+            LabeledContent("Cached") {
+                Text(model.cacheSummary)
+                    .foregroundColor(.secondary)
+            }
+            LabeledContent("Delete data older than") {
+                HStack(spacing: 8) {
+                    DatePicker("", selection: $model.deleteBefore, displayedComponents: .date)
+                        .labelsHidden()
+                    Button("Delete…") { model.requestDelete() }
+                }
+            }
+            StatusLine(status: model.dataStatus)
+        } header: {
+            Text("Data")
+        } footer: {
+            Text("Vantage keeps everything it fetches. Apple deletes sales reports after a year and "
+                 + "analytics after 35 days, so past that Vantage's copy is the only one — and it's "
+                 + "what vantage-cli and AI agents read. A year of history is about 2 MB.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .alert("Delete cached data?", isPresented: Binding(
+            get: { model.pendingDeletion != nil },
+            set: { if !$0 { model.pendingDeletion = nil } })) {
+            Button("Delete", role: .destructive) { model.confirmDelete() }
+            Button("Cancel", role: .cancel) { model.pendingDeletion = nil }
+        } message: {
+            Text(model.pendingDeletion ?? "")
+        }
+    }
+
+    private static func label(_ days: Int) -> String {
+        switch days {
+        case ReportStore.appleRetentionDays: return "1 year (Apple's maximum)"
+        case 180: return "6 months"
+        default: return "\(days) days"
+        }
+    }
+}
 
 /// A rate the user supplies for a currency nothing publishes one for.
 private struct ManualRateRow: View {

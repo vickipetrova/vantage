@@ -8,7 +8,7 @@ struct OverviewView: View {
     private var overview: OverviewModel {
         OverviewModel.build(days: model.days, rates: model.rates, error: model.error,
                             metrics: model.metrics, displayCurrency: Prefs.displayCurrency,
-                            range: model.range)
+                            span: model.span)
     }
 
     var body: some View {
@@ -19,9 +19,13 @@ struct OverviewView: View {
                     EmptyStateView(message: message, checkedAt: overview.checkedAt,
                                    onSettings: model.onSettings)
                 } else {
-                    RangePicker(model: model)
-                    if let headline = overview.headline {
-                        HeadlineCard(headline: headline)
+                    // Grouped at row spacing: the controls label the card under them, and a full
+                    // section gap made them read as a separate block.
+                    VStack(alignment: .leading, spacing: Theme.Space.row) {
+                        TimeControls(model: model)
+                        if let headline = overview.headline {
+                            HeadlineCard(headline: headline)
+                        }
                     }
                     TrendCard(model: model)
                     apps(overview)
