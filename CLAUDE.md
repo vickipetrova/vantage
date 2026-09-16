@@ -226,7 +226,7 @@ request, no key. The spec is `docs/superpowers/specs/2026-09-16-ai-reply-drafts-
   no cleanup check catches every such sentence. The publish confirmation, not `DraftCleanup`, is the
   real safeguard: nothing reaches the App Store without the user reading it first.
 - **Prompt changes are measured, not eyeballed.**
-  `VANTAGE_LIVE_AI=1 swift test --filter LiveDraftEvalTests` runs twelve synthetic reviews
+  `VANTAGE_LIVE_AI=1 swift test --filter LiveDraftEvalTests` runs thirteen synthetic reviews
   through the real model. CI skips it: GitHub's macOS runners are VMs and report `deviceNotEligible`.
 - **Don't use the `apple.intelligence` SF Symbol.** It "may only be used to refer to Apple
   Intelligence", and whether a feature built on it qualifies is unanswered. `sparkles` it is.
