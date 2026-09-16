@@ -40,6 +40,34 @@ public struct AnalyticsRequest: Equatable, Codable, Sendable {
     }
 }
 
+/// What to do about an app's existing report requests, decided before any of it is acted on.
+///
+/// Pure and separate from the client for the same reason the decoders are — and for a sharper one:
+/// the previous version of this decision was three lines inside a completion handler, it was wrong,
+/// and nothing could see that it was wrong.
+public enum AnalyticsRequestDecision: Equatable, Sendable {
+    /// A live `ONGOING` request. Read its reports.
+    case use(String)
+    /// An `ONGOING` request Apple has stopped generating for. Delete it, then create a fresh one —
+    /// creating without deleting is answered `409 STATE_ERROR`, which is the dead end that cost a
+    /// month of analytics.
+    case restart(String)
+    /// Nothing usable exists.
+    case create
+
+    public static func decide(from requests: [AnalyticsRequest]) -> AnalyticsRequestDecision {
+        // Snapshots stop after one generation, so they can never feed a daily chart.
+        let ongoing = requests.filter { $0.accessType == "ONGOING" }
+        if let live = ongoing.first(where: { !$0.stoppedDueToInactivity }) {
+            return .use(live.id)
+        }
+        if let stopped = ongoing.first {
+            return .restart(stopped.id)
+        }
+        return .create
+    }
+}
+
 public struct AnalyticsReport: Equatable, Sendable {
     public let id: String
     public let name: String
@@ -72,6 +100,10 @@ public enum AnalyticsError: LocalizedError, Equatable {
     /// A request exists and Apple hasn't produced anything for it yet. Not a failure: Apple takes
     /// 24–48 hours to generate the first report.
     case notReadyYet
+    /// Apple had stopped generating because nothing read the reports for long enough. The dead
+    /// request has been deleted and a fresh one created, so the 24–48 hour wait starts again.
+    /// Whatever was already downloaded is untouched — `AnalyticsStore` is an archive, not a mirror.
+    case restartedAfterInactivity
     case rateLimited
     case http(Int, detail: String?)
     case network
@@ -88,7 +120,38 @@ public enum AnalyticsError: LocalizedError, Equatable {
         switch self {
         case .noKey, .notAllowedToRequest, .rateLimited, .network:
             return true
-        case .notReadyYet, .http, .badResponse, .corruptSegment:
+        case .notReadyYet, .restartedAfterInactivity, .http, .badResponse, .corruptSegment:
+            return false
+        }
+    }
+
+    /// Whether this is Apple still working, rather than something being wrong.
+    ///
+    /// **Only the two cases where Apple is genuinely generating qualify** — a first report, or a
+    /// replacement for one Apple stopped. This is deliberately not `!stopsTheRun`. Those are two
+    /// different questions: `stopsTheRun` asks whether the *other* apps are still worth trying,
+    /// which is `false` for a hard HTTP error that says nothing about waiting. The panel used
+    /// `!stopsTheRun` to decide what to say, so a `405 METHOD_NOT_ALLOWED` on the create-request
+    /// POST was rendered as "Apple is preparing your first report — this is not an error", on every
+    /// refresh, for a month, while Apple's actual message was discarded. See `ASCToken.mint` for
+    /// what caused that 405.
+    public var isWaitingForApple: Bool {
+        switch self {
+        case .notReadyYet, .restartedAfterInactivity: return true
+        default: return false
+        }
+    }
+
+    /// Whether pointing the user at Settings is the actual fix.
+    ///
+    /// A key or a role, and nothing else. Offering "Open Settings…" for a 500 or a failed checksum
+    /// invites someone to go and replace credentials that are working.
+    public var suggestsCheckingCredentials: Bool {
+        switch self {
+        case .noKey, .notAllowedToRequest:
+            return true
+        case .notReadyYet, .restartedAfterInactivity, .rateLimited, .http, .network, .badResponse,
+             .corruptSegment:
             return false
         }
     }
@@ -105,6 +168,10 @@ public enum AnalyticsError: LocalizedError, Equatable {
         case .notReadyYet:
             return "Apple is generating your first report. This takes a day or two, and Vantage "
                 + "will pick it up on its own."
+        case .restartedAfterInactivity:
+            return "Apple had stopped generating this report because nothing read it for a while. "
+                + "Vantage has started a new one — the first report takes another day or two. "
+                + "Analytics already downloaded is unaffected."
         case .rateLimited:
             return "App Store Connect is rate limiting. Try again shortly."
         case .http(let code, let detail):
@@ -194,6 +261,18 @@ public enum AnalyticsDecoder {
                 checksum: (attributes["checksum"] as? String) ?? "",
                 sizeInBytes: (attributes["sizeInBytes"] as? Int) ?? 0)
         }
+    }
+
+    /// Apple's report-request IDs are UUIDs, and one is about to be interpolated into a URL path
+    /// that a `DELETE` will be sent to.
+    ///
+    /// **Validated, never sanitized** — the same rule `ASCReviewsWriter.isWellFormedResourceID`
+    /// follows, and it matters more here than anywhere: stripping the awkward characters out of a
+    /// hostile value would defeat the traversal while leaving a well-formed request to delete some
+    /// *other* real resource. Refusing the whole value is the only answer that can't be wrong.
+    public static func isWellFormedRequestID(_ id: String) -> Bool {
+        guard !id.isEmpty, id.count <= 64 else { return false }
+        return id.allSatisfy { $0.isHexDigit || $0 == "-" }
     }
 
     /// Apple hands out pre-signed S3 URLs, so the tightest honest constraint is the S3 domain — the

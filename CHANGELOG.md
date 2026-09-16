@@ -6,6 +6,33 @@ All notable changes to Vantage are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Analytics never produced a single number.** App Store Connect accepts a JWT `scope` claim naming
+  `GET` only; a write whose token carried one was answered `405 METHOD_NOT_ALLOWED` — the status for
+  a bad path, which is why this read as a wrong endpoint for a month. `ASCToken` now scopes reads and
+  leaves writes unscoped, limited by `aud` and the five-minute lifetime instead. The same bug would
+  have stopped every review reply from publishing.
+- **Every non-fatal analytics error was shown as "Apple is preparing your first report".** The panel
+  derived "still waiting" from `!stopsTheRun`, which answers a different question, so a hard HTTP
+  failure was presented as normal and Apple's own message was discarded. Waiting is now asked of the
+  error itself, in `VantageCore` where it is tested, and only Apple genuinely generating counts.
+  "Open Settings…" no longer appears for errors that have nothing to do with credentials.
+- **A gap longer than a week was permanent.** Each refresh asked for the newest 7 daily instances
+  whatever had been missed, so a fortnight away left days 8–14 unfetched forever even though Apple
+  still held them. Refreshes are now sized to the gap since the last one, capped at Apple's 35-day
+  retention.
+- **A report request Apple had stopped could never recover.** Apple stops generating for a request
+  nobody reads and refuses to restart one — `POST`ing over it is answered `409`. The stopped request
+  is now deleted and replaced, and says so rather than claiming to be a first report.
+
+### Changed
+
+- **Analytics refreshes in the background**, from the poll timer, wake and launch as well as opening
+  the panel, opening the section, and Refresh Now. Apple keeps daily instances for 35 days, so
+  history nobody collects is lost rather than late. `AnalyticsStore.maxAge` caps this at one to four
+  fetches a day however often the timer fires; only Refresh Now bypasses it.
+
 ## [0.2.0] — 2026-08-21
 
 Vantage's dropdown is gone. The status item now opens a floating panel: an `NSMenu` row can't hold a

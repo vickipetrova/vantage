@@ -298,8 +298,15 @@ final class PanelModel: ObservableObject {
 
     /// Loads engagement, cache first and the network only where the cache is stale.
     ///
-    /// Called when the section opens, never from the poll timer — the same rule reviews follow, and
-    /// for a stronger reason: one refresh here is four requests per app plus a download per segment.
+    /// Called from every refresh — launch, wake and the poll timer included — plus opening the
+    /// panel, opening the Analytics section, and Refresh Now.
+    ///
+    /// Firing in the background is the point: a chart nobody visits still has to keep up, and Apple
+    /// deletes daily instances after 35 days, so history that isn't collected is lost rather than
+    /// merely late. One refresh is four requests per app plus a download per segment, which sounds
+    /// like a reason to be sparing and isn't — `AnalyticsStore.maxAge` gates every caller but
+    /// Refresh Now, so the cost settles at one to four fetches a day no matter who asks or how
+    /// often. Only Refresh Now passes `force`.
     func loadAnalytics(force: Bool = false) {
         hasReviewsKey = KeychainStore.hasReviewsKey
         guard hasReviewsKey else {
@@ -333,7 +340,11 @@ final class PanelModel: ObservableObject {
             return
         }
         let appleID = appleIDs[index]
-        analyticsProvider.engagement(forApp: appleID) { [weak self] result in
+        // Sized to the gap since this app was last fetched, not a fixed seven — see
+        // `AnalyticsStore.instancesNeeded`. Asked before the fetch, because the fetch rewrites
+        // `fetchedAt` and the answer afterwards is always "three".
+        let instances = analyticsStore.instancesNeeded(appleID)
+        analyticsProvider.engagement(forApp: appleID, instances: instances) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {

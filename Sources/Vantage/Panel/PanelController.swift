@@ -70,6 +70,14 @@ final class PanelController: NSObject {
         // shadow tracing the panel's *previous* outline. Cheap to recompute, invisible when right.
         panel.invalidateShadow()
         startMonitoring()
+
+        // Opening the panel *is* opening the app, so analytics refreshes here rather than only when
+        // the Analytics section happens to be looked at. A chart nobody visits for a fortnight was
+        // silently losing days it could still have had.
+        //
+        // Not forced: `AnalyticsStore.maxAge` means a panel opened twenty times in a day costs at
+        // most four refreshes, and this path is passive — the user didn't ask for anything.
+        model.loadAnalytics()
     }
 
     func close() {

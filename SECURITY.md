@@ -145,9 +145,17 @@ A missing icon is a blank tile; it is never a reason to follow a stranger.
 
 The App Store Connect request carries a freshly minted ES256 JWT, signed locally with your private
 key. Apple rejects tokens for this endpoint that live longer than 20 minutes; Vantage issues them
-for **five**. Each token also carries a `scope` claim naming the single request it was minted for,
-so a token that somehow escaped could fetch one sales report for one date and nothing else. Tokens
-are held in memory for the request and dropped — never written to disk.
+for **five**. Every **GET** token also carries a `scope` claim naming the single request it was
+minted for, so a token that somehow escaped could fetch one sales report for one date and nothing
+else. Apple enforces that claim — a scoped token used against any other request is refused with
+`403 FORBIDDEN.REQUEST_DOES_NOT_MATCH_SCOPE`.
+
+**Write tokens carry no scope claim, because Apple accepts none.** A `POST`, `PATCH` or `DELETE`
+whose token is scoped is answered `405 METHOD_NOT_ALLOWED`; a verbless entry or an empty array is
+`400 ENTITY_INVALID`; a `GET` entry is `403`. Only an unscoped token is accepted, so the two writes
+Vantage can make — creating an analytics report request, and publishing a review reply — are
+limited by the `aud` claim and the five-minute lifetime rather than by scope. Tokens are held in
+memory for the request and dropped — never written to disk.
 
 Three currencies Apple pays in — **AED, SAR and QAR** — are converted from a **hard-coded peg**
 rather than a fetched rate, because their central banks fix them against the US dollar and the ECB

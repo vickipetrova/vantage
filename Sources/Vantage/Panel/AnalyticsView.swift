@@ -90,7 +90,9 @@ struct AnalyticsView: View {
     @ViewBuilder
     private var waiting: some View {
         let error = model.analyticsError as? AnalyticsError
-        let isWaiting = error == nil || error?.stopsTheRun == false
+        // Asked of the error itself, in Core, where a test can reach it. This was `!stopsTheRun`,
+        // which answers a different question and reported every hard failure as a normal wait.
+        let isWaiting = error.map(\.isWaitingForApple) ?? true
 
         VStack(alignment: .leading, spacing: Theme.Space.row) {
             HStack(spacing: Theme.Space.tight) {
@@ -106,8 +108,9 @@ struct AnalyticsView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             // Only offered where it's the actual fix. A key button under "come back tomorrow"
-            // suggests something is wrong with the key, which is what made this confusing.
-            if !isWaiting {
+            // suggests something is wrong with the key, which is what made this confusing — and a
+            // key button under "HTTP 500" invites replacing credentials that work.
+            if error?.suggestsCheckingCredentials == true {
                 Button("Open Settings…") { model.onSettings?() }
                     .controlSize(.small)
             }

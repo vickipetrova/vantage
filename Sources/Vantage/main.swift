@@ -145,6 +145,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panelModel.refreshFinished(succeeded: false)
             return
         }
+        // Analytics rides **every** refresh, background ones included — so a Mac sitting in the
+        // menu bar keeps its history current without anyone opening anything.
+        //
+        // What makes that affordable is the staleness gate rather than restraint about when to ask.
+        // `refresh` is the launch, wake and poll-timer path, and `Schedule.nextPoll` fires hourly
+        // only while chasing a report that's due, otherwise once at the next morning window — but
+        // `AnalyticsStore.maxAge` is the real limit, so this settles at one to four fetches a day
+        // however often the timer fires. Analytics data moves daily; anything tighter would re-pull
+        // the same numbers.
+        //
+        // `force` only when the user asked. Clicking Refresh means now, not "if the six-hour cache
+        // agrees"; a timer firing does not get to say that. It sits above the `isFetching` guard
+        // because a sales backfill already in flight says nothing about whether analytics is worth
+        // fetching, and `days` is populated by the `render()` that precedes the launch refresh, so
+        // there is always an app list to work from.
+        panelModel.loadAnalytics(force: userInitiated)
+
         guard !isFetching else { return }  // Refresh Now during a backfill shouldn't double it.
         isFetching = true
         panelModel.refreshStarted()

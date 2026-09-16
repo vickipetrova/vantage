@@ -134,6 +134,47 @@ final class AnalyticsDecodingTests: XCTestCase {
         XCTAssertTrue(AnalyticsError.network.stopsTheRun)
     }
 
+    // MARK: - What the panel is allowed to call "waiting"
+
+    /// **Only the two generating cases are Apple still working** — `notReadyYet` and
+    /// `restartedAfterInactivity`. Everything else is a failure and must be shown as one.
+    ///
+    /// `stopsTheRun` used to stand in for this, and the two questions are not the same one: it asks
+    /// "should the other apps still be tried?", which is `false` for a hard HTTP error that has
+    /// nothing to do with waiting. The panel read that `false` as "waiting", so a `405` on the
+    /// create-request POST was rendered as "Apple is preparing your first report — this is not an
+    /// error" every refresh for a month. See `ASCToken.mint`.
+    func testOnlyNotReadyYetCountsAsWaitingForApple() {
+        XCTAssertTrue(AnalyticsError.notReadyYet.isWaitingForApple)
+
+        for error: AnalyticsError in [.http(405, detail: nil), .http(500, detail: "boom"),
+                                      .badResponse, .corruptSegment, .noKey, .rateLimited,
+                                      .network, .notAllowedToRequest(detail: nil)] {
+            XCTAssertFalse(error.isWaitingForApple, "\(error) is a failure, not a wait")
+        }
+    }
+
+    /// A non-fatal error must not lose Apple's own explanation — that text is the only clue the
+    /// user gets, and swallowing it is what made this bug invisible.
+    func testANonFatalHTTPErrorStillDescribesItself() {
+        XCTAssertEqual(AnalyticsError.http(405, detail: "The request method is not valid")
+            .errorDescription, "The request method is not valid")
+        XCTAssertEqual(AnalyticsError.http(500, detail: nil).errorDescription,
+                       "App Store Connect returned HTTP 500.")
+    }
+
+    /// "Open Settings…" is only ever the fix for a key or a role. Offering it for a 500 or a bad
+    /// gzip tells the user to go and break credentials that are working perfectly.
+    func testOnlyCredentialProblemsPointAtSettings() {
+        XCTAssertTrue(AnalyticsError.noKey.suggestsCheckingCredentials)
+        XCTAssertTrue(AnalyticsError.notAllowedToRequest(detail: nil).suggestsCheckingCredentials)
+
+        for error: AnalyticsError in [.notReadyYet, .rateLimited, .network, .badResponse,
+                                      .corruptSegment, .http(500, detail: nil)] {
+            XCTAssertFalse(error.suggestsCheckingCredentials, "\(error) is not a credential problem")
+        }
+    }
+
     // MARK: - Checksums
 
     func testAMatchingChecksumPasses() {
@@ -220,6 +261,44 @@ final class AnalyticsStoreTests: XCTestCase {
             "6478", now: now.addingTimeInterval(AnalyticsStore.maxAge + 1)))
     }
 
+    // MARK: - Covering the gap since the last look
+
+    private static let now = Date(timeIntervalSince1970: 1_800_000_000)
+    private func daysLater(_ days: Int) -> Date {
+        Self.now.addingTimeInterval(Double(days) * 24 * 60 * 60)
+    }
+
+    /// Nothing cached: take the opening window, not the whole retention period. A first refresh
+    /// already costs a segments call and a download per instance per app.
+    func testAFirstFetchTakesTheOpeningWindow() {
+        XCTAssertEqual(store.instancesNeeded("6478", now: Self.now),
+                       AnalyticsStore.openingInstances)
+    }
+
+    /// Even a cache fetched minutes ago revisits the last few days, because Apple revises a day as
+    /// late events land and a day isn't final until two days after it.
+    func testAFreshCacheStillRevisitsTheDaysApplesStillRevising() {
+        store.merge([day(19, impressions: 1)], for: "6478", now: Self.now)
+        XCTAssertEqual(store.instancesNeeded("6478", now: Self.now),
+                       AnalyticsStore.revisionOverlap)
+    }
+
+    /// The bug this closes: `instanceLimit` was a fixed 7, so a fortnight away left days 8–14
+    /// permanently missing even though Apple still held them.
+    func testAGapLongerThanAWeekIsCoveredRatherThanTruncated() {
+        store.merge([day(19, impressions: 1)], for: "6478", now: Self.now)
+        XCTAssertEqual(store.instancesNeeded("6478", now: daysLater(14)),
+                       14 + AnalyticsStore.revisionOverlap)
+    }
+
+    /// Apple keeps daily instances for 35 days. Asking for more is not wrong so much as pointless,
+    /// and it is the one limit no amount of code can route around.
+    func testCoverageStopsAtApplesRetentionWindow() {
+        store.merge([day(19, impressions: 1)], for: "6478", now: Self.now)
+        XCTAssertEqual(store.instancesNeeded("6478", now: daysLater(400)),
+                       AnalyticsStore.retentionInstances)
+    }
+
     func testNonNumericAppleIDsAreRefused() {
         XCTAssertFalse(store.save([day(19, impressions: 1)], for: "../../123/x"))
         XCTAssertNil(store.load("../../123/x"))
@@ -234,5 +313,68 @@ final class AnalyticsStoreTests: XCTestCase {
         XCTAssertEqual(merged.count, 1)
         XCTAssertEqual(merged.first?.impressions, 1000)
         XCTAssertEqual(merged.first?.pageViews, 100)
+    }
+}
+
+/// Which of the three things to do about an app's report requests.
+///
+/// Pure and separate from the client for the same reason the decoders are: this is where the month
+/// of silence actually lived, and a decision that can be tested is a decision that can be trusted.
+final class AnalyticsRequestDecisionTests: XCTestCase {
+    private func request(_ id: String, _ accessType: String = "ONGOING",
+                         stopped: Bool = false) -> AnalyticsRequest {
+        AnalyticsRequest(id: id, accessType: accessType, stoppedDueToInactivity: stopped)
+    }
+
+    func testALiveOngoingRequestIsUsed() {
+        XCTAssertEqual(AnalyticsRequestDecision.decide(from: [request("abc")]), .use("abc"))
+    }
+
+    func testNothingAtAllMeansCreateOne() {
+        XCTAssertEqual(AnalyticsRequestDecision.decide(from: []), .create)
+    }
+
+    /// **The dead end this closes.** Apple stops generating for a request nobody reads. The old
+    /// code filtered the stopped request out and fell through to `create`, which Apple answers
+    /// `409 STATE_ERROR — You already have such an entity`, mapped to `notReadyYet`. The panel then
+    /// said "Apple is preparing your first report" forever, with no way back.
+    func testAStoppedRequestIsRestartedRatherThanBlindlyRecreated() {
+        XCTAssertEqual(AnalyticsRequestDecision.decide(from: [request("dead", stopped: true)]),
+                       .restart("dead"))
+    }
+
+    func testALiveRequestIsPreferredOverAStoppedOne() {
+        let decision = AnalyticsRequestDecision.decide(
+            from: [request("dead", stopped: true), request("live")])
+        XCTAssertEqual(decision, .use("live"))
+    }
+
+    /// A snapshot stops after one generation, so it can't serve a daily chart and must not be
+    /// mistaken for a request that will keep producing.
+    func testAOneTimeSnapshotIsNotMistakenForAnOngoingRequest() {
+        XCTAssertEqual(
+            AnalyticsRequestDecision.decide(from: [request("snap", "ONE_TIME_SNAPSHOT")]), .create)
+    }
+
+    /// A restart sends a `DELETE` to a path built from this ID, so a hostile one must be refused
+    /// whole rather than cleaned up into a request that deletes something else.
+    func testARequestIDGoingIntoADeletePathIsValidatedNotSanitized() {
+        XCTAssertTrue(
+            AnalyticsDecoder.isWellFormedRequestID("3f2504e0-4f89-11d3-9a0c-0305e82c3301"))
+
+        for hostile in ["../../v1/users", "abc/../../apps", "", String(repeating: "a", count: 65),
+                        "3f2504e0 4f89", "3f2504e0?filter=x", "zzzz-not-hex"] {
+            XCTAssertFalse(AnalyticsDecoder.isWellFormedRequestID(hostile), "accepted \(hostile)")
+        }
+    }
+
+    /// Restarting means Apple's 24–48 hours begins again — a wait, and one that needs different
+    /// words from "preparing your first report", since it isn't the first.
+    func testARestartIsAWaitAndNotACredentialProblem() {
+        XCTAssertTrue(AnalyticsError.restartedAfterInactivity.isWaitingForApple)
+        XCTAssertFalse(AnalyticsError.restartedAfterInactivity.stopsTheRun)
+        XCTAssertFalse(AnalyticsError.restartedAfterInactivity.suggestsCheckingCredentials)
+        let text = AnalyticsError.restartedAfterInactivity.errorDescription
+        XCTAssertEqual(text?.contains("stopped"), true)
     }
 }
