@@ -97,10 +97,16 @@ public enum DraftCleanup {
         return lines.joined(separator: "\n")
     }
 
-    /// Whether a line is a placeholder sign-off (only a placeholder, or placeholder with closing word).
-    /// After removing all placeholders and trimming punctuation/whitespace, nothing substantive remains.
+    /// "[Your Name]", "[Developer Name]": a bracketed blank the model left for someone to fill in.
+    static let placeholderPattern = #"\[[^\[\]\n]{1,40}\]"#
+
+    /// Whether a line is a placeholder sign-off: it contains a placeholder, and with placeholders
+    /// removed it's empty or a closing. "Cheers!" alone has no placeholder and isn't one — it's the
+    /// model's words, visible in the editor, and not ours to delete.
     static func isPlaceholderSignOff(_ line: String) -> Bool {
-        let withoutPlaceholders = line.replacingOccurrences(of: #"\[[^\[\]\n]{1,40}\]"#, with: "", options: .regularExpression)
+        guard containsPlaceholder(line) else { return false }
+        let withoutPlaceholders = line.replacingOccurrences(of: placeholderPattern, with: "",
+                                                            options: .regularExpression)
         let word = folded(withoutPlaceholders)
             .trimmingCharacters(in: .whitespaces)
             .trimmingCharacters(in: CharacterSet(charactersIn: ",.!-—"))
@@ -127,7 +133,7 @@ public enum DraftCleanup {
     }
 
     static func containsPlaceholder(_ text: String) -> Bool {
-        text.range(of: #"\[[^\[\]\n]{1,40}\]"#, options: .regularExpression) != nil
+        text.range(of: placeholderPattern, options: .regularExpression) != nil
     }
 
     static func containsContactDetails(_ text: String) -> Bool {

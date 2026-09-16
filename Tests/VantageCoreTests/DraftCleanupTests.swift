@@ -68,6 +68,13 @@ final class DraftCleanupTests: XCTestCase {
         XCTAssertEqual(cleaned("Thanks for the kind words!\n[Your Name]"), "Thanks for the kind words!")
     }
 
+    /// Only a line with a placeholder is a sign-off to strip. A closing on its own is the model's
+    /// words, visible in the editor, and not ours to delete.
+    func testAClosingWithoutAPlaceholderIsKept() {
+        XCTAssertEqual(cleaned("Thanks for the kind words!\nCheers!"), "Thanks for the kind words!\nCheers!")
+        XCTAssertEqual(cleaned("Thanks for the kind words!\n\nThank you"), "Thanks for the kind words!\n\nThank you")
+    }
+
     func testWindowsLineEndingsDoNotHideASignOff() {
         XCTAssertEqual(cleaned("Thanks for the kind words!\r\n\r\nBest,\r\n[Your Name]"), "Thanks for the kind words!")
     }
