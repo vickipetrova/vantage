@@ -66,8 +66,12 @@ struct ReviewCard: View {
                     draft: Binding(
                         get: { draft },
                         set: { new in model.updateDraft(review.id) { $0 = new } }),
+                    draftAvailability: model.draftAvailability,
                     onPublish: { model.publishReply(to: review.id) },
-                    onCancel: { model.cancelReply(to: review.id) })
+                    onCancel: { model.cancelReply(to: review.id) },
+                    onDraft: { model.draftReply(to: review) },
+                    onUndoDraft: { model.undoDraft(to: review.id) },
+                    onOpenAppleIntelligenceSettings: { model.openAppleIntelligenceSettings() })
                     .padding(.top, 2)
             } else if model.repliesEnabled {
                 HStack {

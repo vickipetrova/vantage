@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 import VantageCore
+import VantageIntelligence
 
 /// Everything the panel renders, and the only thing its views read from.
 ///
@@ -298,7 +299,11 @@ final class PanelModel: ObservableObject {
         hasReviewsKey = KeychainStore.hasReviewsKey
         repliesEnabled = Prefs.repliesEnabled
         writer = Self.makeWriter()
-        if !repliesEnabled { drafts = [:] }
+        if !repliesEnabled {
+            draftTasks.values.forEach { $0.cancel() }
+            draftTasks = [:]
+            drafts = [:]
+        }
         if !hasReviewsKey {
             reviews = [:]
             reviewStore.forgetAll()
@@ -418,9 +423,12 @@ final class PanelModel: ObservableObject {
     func beginReply(to review: CustomerReview) {
         guard repliesEnabled else { return }
         drafts[review.id] = ReplyDraft(reviewID: review.id, existing: review.response)
+        prepareDrafting(for: review)
     }
 
     func cancelReply(to reviewID: String) {
+        draftTasks[reviewID]?.cancel()
+        draftTasks[reviewID] = nil
         drafts[reviewID] = nil
     }
 
@@ -430,6 +438,83 @@ final class PanelModel: ObservableObject {
         guard var draft = drafts[reviewID] else { return }
         change(&draft)
         drafts[reviewID] = draft
+    }
+
+    // MARK: - Drafting
+
+    /// Apple's on-device model, or nil on a Mac or macOS that can't have it. Runs on this Mac only.
+    private let drafter: ReplyDrafter? = makeReplyDrafter()
+    /// Read by the composer. `.hidden` until a composer first opens.
+    @Published private(set) var draftAvailability: DraftAvailability = .hidden
+    private var isObservingDraftAvailability = false
+    /// One per review being drafted, so Cancel can stop the model rather than ignore its answer.
+    private var draftTasks: [String: Task<Void, Never>] = [:]
+
+    /// Checked each time a composer opens, and observed after that, so switching Apple Intelligence
+    /// on or finishing its download shows up without reopening anything.
+    private func prepareDrafting(for review: CustomerReview) {
+        guard let drafter else { return }
+        if !isObservingDraftAvailability {
+            isObservingDraftAvailability = true
+            drafter.observeAvailability { [weak self] in self?.refreshDraftAvailability() }
+        }
+        refreshDraftAvailability()
+        // Opening the composer is the "strong signal" Apple's prewarm documentation asks for, and
+        // the review is already known, so the whole prompt can be processed ahead of the click.
+        if draftAvailability == .available {
+            drafter.prewarm(draftRequest(for: review))
+        }
+    }
+
+    private func refreshDraftAvailability() {
+        draftAvailability = drafter?.availability ?? .hidden
+    }
+
+    private func draftRequest(for review: CustomerReview) -> DraftRequest {
+        // `titleForApp` falls back to the Apple ID, which is no name to put in a prompt.
+        let title = titleForApp(review.appleID)
+        return ReplyPrompt.request(for: review, appName: title == review.appleID ? nil : title)
+    }
+
+    func draftReply(to review: CustomerReview) {
+        guard let drafter else { return }
+        refreshDraftAvailability()
+        var started = false
+        updateDraft(review.id) { started = $0.beginDrafting() }
+        guard started else { return }
+
+        let request = draftRequest(for: review)
+        draftTasks[review.id]?.cancel()
+        draftTasks[review.id] = Task { [weak self] in
+            let result = await ReplyDrafting.run(request, with: drafter)
+            await MainActor.run {
+                guard let self else { return }
+                self.draftTasks[review.id] = nil
+                guard let result else { return }
+                // `updateDraft` does nothing if the composer was closed, and `ReplyDraft` refuses a
+                // draft if the user typed meanwhile or reopened the composer.
+                self.updateDraft(review.id) { draft in
+                    switch result {
+                    case .success(let text): draft.applyDraft(text)
+                    case .failure(let error): draft.draftFailed(error)
+                    }
+                }
+            }
+        }
+    }
+
+    func undoDraft(to reviewID: String) {
+        updateDraft(reviewID) { $0.undoDraft() }
+    }
+
+    /// The Apple Intelligence & Siri pane. Apple doesn't document these identifiers and has renamed
+    /// panes between releases, so a refusal falls back to System Settings itself.
+    func openAppleIntelligenceSettings() {
+        if let pane = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension"),
+           NSWorkspace.shared.open(pane) {
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
     }
 
     /// The write capability, or nil.
