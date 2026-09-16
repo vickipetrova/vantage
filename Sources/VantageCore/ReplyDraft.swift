@@ -195,6 +195,18 @@ public struct ReplyDraft: Equatable {
         guard case .drafting(_, let undo) = assist else { return }
         assist = .failed(error, undo: undo)
     }
+
+    /// Apple Intelligence became available. A failure that only said "unavailable" is out of date,
+    /// and leaving it would keep Open Settings on screen with no Draft button to come back to.
+    ///
+    /// Only a failure with nothing to undo is cleared. With `undo`, the editor usually holds an
+    /// unedited draft — but typing during a Try again that then fails leaves the user's own text
+    /// there, and `.failed` can't tell the two apart, so calling it `.drafted` could be untrue.
+    /// Those keep their Undo, which is the one thing they must not lose. Never touches `stage`.
+    public mutating func availabilityChanged() {
+        guard case .failed(.unavailable, undo: nil) = assist else { return }
+        assist = .idle
+    }
 }
 
 /// What makes a reply publishable.

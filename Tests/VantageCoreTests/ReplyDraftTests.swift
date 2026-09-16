@@ -360,6 +360,77 @@ final class ReplyDraftTests: XCTestCase {
         XCTAssertEqual(draft.assist, .idle)
     }
 
+    // MARK: - Availability changing under a failure
+
+    /// Draft while Apple Intelligence is off, then turn it on: the Draft button must come back
+    /// rather than leaving "Turn on Apple Intelligence" and Open Settings with nothing to click.
+    func testTurningAppleIntelligenceOnClearsAnUnavailableFailure() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Mine")
+        draft.beginDrafting()
+        draft.draftFailed(.unavailable(.turnedOff))
+
+        draft.availabilityChanged()
+        XCTAssertEqual(draft.assist, .idle)
+        XCTAssertEqual(draft.text, "Mine")
+        XCTAssertEqual(draft.stage, .editing)
+    }
+
+    func testAPreparingFailureIsAlsoCleared() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.beginDrafting()
+        draft.draftFailed(.unavailable(.preparing))
+        draft.availabilityChanged()
+        XCTAssertEqual(draft.assist, .idle)
+    }
+
+    func testOtherFailuresAreUntouchedByAvailability() {
+        for error in [DraftError.declined, .rejected, .failed, .unsupportedLanguage] {
+            var draft = ReplyDraft(reviewID: "review-1")
+            draft.beginDrafting()
+            draft.draftFailed(error)
+            draft.availabilityChanged()
+            XCTAssertEqual(draft.assist, .failed(error, undo: nil))
+            XCTAssertEqual(draft.stage, .editing)
+        }
+    }
+
+    /// Undo must stay reachable. Whether the editor still holds an unedited draft can't be known
+    /// from `.failed` — typing during a Try again that then fails leaves the user's text there — so
+    /// this case isn't turned back into `.drafted`.
+    func testAnUnavailableFailureWithUndoKeepsItsUndo() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Mine")
+        draft.beginDrafting()
+        draft.applyDraft("First draft.")
+        draft.beginDrafting()
+        draft.draftFailed(.unavailable(.turnedOff))
+
+        draft.availabilityChanged()
+        XCTAssertEqual(draft.assist, .failed(.unavailable(.turnedOff), undo: "Mine"))
+        XCTAssertEqual(draft.undoText, "Mine")
+    }
+
+    func testAvailabilityNeverMovesTheStage() {
+        var draft = ReplyDraft(reviewID: "review-1")
+        draft.edit("Thanks!")
+        draft.beginDrafting()
+        draft.draftFailed(.unavailable(.turnedOff))
+        draft.requestConfirmation()
+        draft.availabilityChanged()
+        XCTAssertEqual(draft.stage, .awaitingConfirmation)
+
+        var idle = ReplyDraft(reviewID: "review-2")
+        idle.availabilityChanged()
+        XCTAssertEqual(idle.assist, .idle)
+        XCTAssertEqual(idle.stage, .editing)
+
+        var drafting = ReplyDraft(reviewID: "review-3")
+        drafting.beginDrafting()
+        drafting.availabilityChanged()
+        XCTAssertEqual(drafting.assist, .drafting(textRevision: 0, undo: nil))
+    }
+
     /// The invariant, restated for the new transitions: no sequence of them publishes anything.
     func testDraftingNeverReachesSending() {
         var draft = ReplyDraft(reviewID: "review-1")

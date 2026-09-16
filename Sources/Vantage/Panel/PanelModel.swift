@@ -473,6 +473,10 @@ final class PanelModel: ObservableObject {
 
     private func refreshDraftAvailability() {
         draftAvailability = drafter?.availability ?? .hidden
+        // Clears "Turn on Apple Intelligence" from any composer that failed while it was off.
+        if draftAvailability == .available {
+            for reviewID in drafts.keys { updateDraft(reviewID) { $0.availabilityChanged() } }
+        }
     }
 
     private func draftRequest(for review: CustomerReview) -> DraftRequest {
