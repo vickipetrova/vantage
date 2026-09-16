@@ -438,6 +438,14 @@ final class PanelModel: ObservableObject {
         guard var draft = drafts[reviewID] else { return }
         change(&draft)
         drafts[reviewID] = draft
+        // A draft that stopped drafting by any route — Review reply…, Undo, a result landing — has
+        // no use for the model's answer, so stop the model rather than let it run on. The completion
+        // hop clears its own entry before calling here, so its token check is unaffected.
+        if case .drafting = draft.assist { return }
+        if let running = draftTasks[reviewID] {
+            running.task.cancel()
+            draftTasks[reviewID] = nil
+        }
     }
 
     // MARK: - Drafting
@@ -506,7 +514,9 @@ final class PanelModel: ObservableObject {
                 if self.draftTasks[reviewID]?.token == token {
                     self.draftTasks[reviewID] = nil
                 }
-                guard let result else { return }
+                // Cancelled on the main actor after `ReplyDrafting.run` last checked — by leaving
+                // drafting, say — so its answer must not land on whatever drafting started since.
+                guard let result, !Task.isCancelled else { return }
                 // `updateDraft` does nothing if the composer was closed, and `ReplyDraft` refuses a
                 // draft if the user typed meanwhile or reopened the composer.
                 self.updateDraft(reviewID) { draft in
