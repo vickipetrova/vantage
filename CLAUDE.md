@@ -40,7 +40,7 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/Schedule.swift` | When to poll, and when a report deserves a notification |
 | `Sources/VantageCore/Metric.swift` | Which product types count as what |
 | `Sources/VantageCore/FX.swift` | ECB rates fetch, parse, conversion, and the hard USD pegs |
-| `Sources/VantageCore/KeychainStore.swift` | Credential storage — two independent keys |
+| `Sources/VantageCore/KeychainStore.swift` | Credential storage — one Keychain item, and the in-memory copy |
 | `Sources/VantageCore/ASCToken.swift` | The ES256 JWT, shared by both clients |
 | `Sources/VantageCore/Review.swift` | Review models, and JSON:API → `CustomerReview` |
 | `Sources/VantageCore/ReviewsProvider.swift` | The reviews seam, and `ReviewsError` |
@@ -137,8 +137,29 @@ Diagnostics go to stderr.
 ## Two keys
 
 Vantage holds a **sales key** (required, Sales and Reports role) and an optional **reviews key**
-(App Manager). They are separate Keychain items, separate types, and each client is constructed with
-its own credentials closure — so neither can be used for the other's work by accident.
+(App Manager). They are separate types, and each client is constructed with its own credentials
+closure — so neither can be used for the other's work by accident.
+
+They are **no longer separate Keychain items**. Everything lives in one item, because a Keychain ACL
+is granted per item: seven items meant seven password prompts every launch, and "Always Allow" only
+ever answered the item it was asked about. The separation that remains is type and wiring, not
+storage — `SECURITY.md` says so in those words rather than claiming more, and anything that assumed
+storage isolation needs re-reading before it is trusted.
+
+Two things in `KeychainStore` that are load-bearing:
+
+- **The legacy sweep runs on every load, not once.** That is what recovers a migration where the
+  user dismissed some of the seven prompts: only the values actually read are deleted, and the rest
+  are absorbed on a later launch. A missing Keychain item is answered without consulting an ACL, so
+  once the sweep has nothing to find it prompts for nothing.
+- **`Prefs.rememberCredentials` decides whether the vault is cached in memory** (default on). Off
+  means read-on-demand, which is what `SECURITY.md` promised unconditionally before the setting
+  existed. Switching it off must drop what is already held — `forgetCachedCredentials()` — or the
+  setting appears to do nothing until the next launch.
+
+Note that "Always Allow" cannot stick for a build from source: `build.sh` ad-hoc signs, so the
+bundle's designated requirement is the **hash of the binary** and every rebuild invalidates every
+grant. Signed, notarized releases keep theirs. Same root cause as the notifications gap below.
 
 `docs/REVIEWS_API.md` is the verified reference. The short version: **App Manager can read reviews
 and cannot answer them** — Apple's role matrix, its help pages and the `UserRole` enum all agree on
