@@ -58,7 +58,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     private func build() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 560),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered, defer: false)
         window.title = "Vantage Settings"
@@ -69,7 +69,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         // Below the tallest content, so the form scrolls rather than clipping on a small display —
         // an earlier fixed 860pt window put "Launch at login" off the bottom of a 900pt screen with
         // no way to reach it.
-        window.setContentSize(NSSize(width: 540, height: min(560, (NSScreen.main?.visibleFrame.height ?? 900) - 80)))
+        window.setContentSize(NSSize(width: 580, height: min(560, (NSScreen.main?.visibleFrame.height ?? 900) - 80)))
         self.window = window
     }
 }
