@@ -300,7 +300,7 @@ final class PanelModel: ObservableObject {
         repliesEnabled = Prefs.repliesEnabled
         writer = Self.makeWriter()
         if !repliesEnabled {
-            draftTasks.values.forEach { $0.cancel() }
+            draftTasks.values.forEach { $0.task.cancel() }
             draftTasks = [:]
             drafts = [:]
         }
@@ -427,7 +427,7 @@ final class PanelModel: ObservableObject {
     }
 
     func cancelReply(to reviewID: String) {
-        draftTasks[reviewID]?.cancel()
+        draftTasks[reviewID]?.task.cancel()
         draftTasks[reviewID] = nil
         drafts[reviewID] = nil
     }
@@ -448,7 +448,12 @@ final class PanelModel: ObservableObject {
     @Published private(set) var draftAvailability: DraftAvailability = .hidden
     private var isObservingDraftAvailability = false
     /// One per review being drafted, so Cancel can stop the model rather than ignore its answer.
-    private var draftTasks: [String: Task<Void, Never>] = [:]
+    ///
+    /// Paired with a token rather than keyed on the task alone: the completion hop below can only
+    /// clear its own entry, not whichever task happens to be there when it runs — otherwise a
+    /// cancelled draft's own unwind could clear a second draft's task out from under it, and Cancel
+    /// would stop being able to stop that one.
+    private var draftTasks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
 
     /// Checked each time a composer opens, and observed after that, so switching Apple Intelligence
     /// on or finishing its download shows up without reopening anything.
@@ -484,16 +489,23 @@ final class PanelModel: ObservableObject {
         guard started else { return }
 
         let request = draftRequest(for: review)
-        draftTasks[review.id]?.cancel()
-        draftTasks[review.id] = Task { [weak self] in
+        draftTasks[review.id]?.task.cancel()
+        let reviewID = review.id
+        let token = UUID()
+        let task = Task { [weak self] in
             let result = await ReplyDrafting.run(request, with: drafter)
-            await MainActor.run {
+            await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.draftTasks[review.id] = nil
+                // Only clears this task's own entry. A cancelled draft's unwind reaching here after
+                // a second Draft has already replaced the entry would otherwise clear the new task,
+                // leaving Cancel unable to stop it.
+                if self.draftTasks[reviewID]?.token == token {
+                    self.draftTasks[reviewID] = nil
+                }
                 guard let result else { return }
                 // `updateDraft` does nothing if the composer was closed, and `ReplyDraft` refuses a
                 // draft if the user typed meanwhile or reopened the composer.
-                self.updateDraft(review.id) { draft in
+                self.updateDraft(reviewID) { draft in
                     switch result {
                     case .success(let text): draft.applyDraft(text)
                     case .failure(let error): draft.draftFailed(error)
@@ -501,6 +513,7 @@ final class PanelModel: ObservableObject {
                 }
             }
         }
+        draftTasks[review.id] = (token, task)
     }
 
     func undoDraft(to reviewID: String) {
