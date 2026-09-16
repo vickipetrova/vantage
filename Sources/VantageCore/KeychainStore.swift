@@ -1,7 +1,18 @@
 import Foundation
 import Security
 
-/// The four values Vantage needs to talk to App Store Connect, held in the macOS Keychain.
+/// The values Vantage needs to talk to App Store Connect, held in the macOS Keychain.
+///
+/// **Two independent keys.** The sales key is required and needs only a reports role. The reviews
+/// key is optional, needs a more powerful role, and is stored as its own separate Keychain items so
+/// that adding one never widens what the sales key can do.
+///
+/// The separation is real in *storage* — two disjoint sets of account names, and `reviewsKey()`
+/// deliberately does not fall back to the sales key — and in *injection*: each client's default
+/// argument reads only its own. It is **not** enforced by the type system: both keys are `ASCKey`,
+/// so a caller that went out of its way could hand one to the other's client. Nothing does, and the
+/// defaults make the right thing the easy thing, but the honest description is "separate storage
+/// and separate wiring", not "impossible to mix".
 ///
 /// Nothing in this file logs, prints, or returns a credential in an error message. Values are read
 /// on demand, handed to one request, and dropped. Keep it that way — see the guardrails in
@@ -12,13 +23,28 @@ public enum KeychainStore {
     public static let service = "com.vickipetrova.vantage"
 
     /// One Keychain item per value, rather than one JSON blob, so Keychain Access shows a person
-    /// four legible rows and so a partial setup is representable.
+    /// legible rows and so a partial setup is representable.
     public enum Key: String, CaseIterable {
         case issuerID
         case keyID
         /// The full text of the `.p8` file, PEM armour included.
         case privateKey
         case vendorNumber
+
+        // The optional reviews key. Separate items, separate values, never mixed with the four
+        // above — see `reviewsKey()`.
+        case reviewsIssuerID
+        case reviewsKeyID
+        case reviewsPrivateKey
+
+        /// Which key an item belongs to, so Settings can forget one without touching the other and
+        /// can present the reviews fields as optional rather than missing.
+        public var isReviews: Bool {
+            switch self {
+            case .reviewsIssuerID, .reviewsKeyID, .reviewsPrivateKey: return true
+            case .issuerID, .keyID, .privateKey, .vendorNumber: return false
+            }
+        }
     }
 
     // MARK: - Reading
@@ -52,6 +78,21 @@ public enum KeychainStore {
     }
 
     public static var hasCredentials: Bool { credentials() != nil }
+
+    /// The optional reviews key, or nil when it isn't configured.
+    ///
+    /// Deliberately **not** a fallback to the sales key. A sales key can't read reviews, so falling
+    /// back would turn "you haven't added a reviews key" into an opaque 403 — and if it ever could,
+    /// silently using a key for something the user didn't grant it for is worse than an empty state.
+    public static func reviewsKey() -> ASCKey? {
+        guard let issuerID = value(for: .reviewsIssuerID),
+              let keyID = value(for: .reviewsKeyID),
+              let privateKey = value(for: .reviewsPrivateKey)
+        else { return nil }
+        return ASCKey(issuerID: issuerID, keyID: keyID, privateKey: privateKey)
+    }
+
+    public static var hasReviewsKey: Bool { reviewsKey() != nil }
 
     // MARK: - Writing
 
@@ -99,25 +140,41 @@ public enum KeychainStore {
         return status == errSecSuccess || status == errSecItemNotFound
     }
 
-    /// "Forget credentials" in Settings. Removes every value Vantage stored.
+    /// "Forget credentials" in Settings. Removes every value Vantage stored, both keys.
     public static func forgetAll() {
         for key in Key.allCases { delete(key) }
     }
+
+    /// Removes only the reviews key, leaving sales working.
+    ///
+    /// The point of a separate optional key is being able to take it back without losing the app,
+    /// so this has to exist and has to be the thing the reviews section's own button calls.
+    public static func forgetReviewsKey() {
+        for key in Key.allCases where key.isReviews { delete(key) }
+    }
 }
 
-/// The four values, in memory, for the lifetime of one request batch.
+/// The four values the sales key needs, in memory, for the lifetime of one request batch.
 public struct Credentials {
-    public let issuerID: String
-    public let keyID: String
-    /// The `.p8` file's contents. Never written anywhere but the Keychain.
-    public let privateKey: String
+    /// Internal rather than public: only `ASCClient`, in this module, has business unwrapping the
+    /// sales key back out of its credentials.
+    let key: ASCKey
+    /// Sales reports only. The reviews endpoints take no vendor number, which is one more reason
+    /// the two keys don't share a type.
     public let vendorNumber: String
 
-    public init(issuerID: String, keyID: String, privateKey: String, vendorNumber: String) {
-        self.issuerID = issuerID
-        self.keyID = keyID
-        self.privateKey = privateKey
+    public var issuerID: String { key.issuerID }
+    public var keyID: String { key.keyID }
+    public var privateKey: String { key.privateKey }
+
+    public init(key: ASCKey, vendorNumber: String) {
+        self.key = key
         self.vendorNumber = vendorNumber
+    }
+
+    public init(issuerID: String, keyID: String, privateKey: String, vendorNumber: String) {
+        self.init(key: ASCKey(issuerID: issuerID, keyID: keyID, privateKey: privateKey),
+                  vendorNumber: vendorNumber)
     }
 }
 

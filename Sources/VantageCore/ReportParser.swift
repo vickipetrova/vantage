@@ -9,6 +9,17 @@ import Foundation
 /// `docs/REPORT_FORMAT.md` is the reference for every rule below, with sources. Read it before
 /// changing anything here.
 public enum ReportParser {
+    /// Bumped whenever this parser starts reading something it previously ignored.
+    ///
+    /// A day's *report* is immutable, so `ReportStore` never refetches an observed day — but our
+    /// *reading* of it isn't immutable, and a day parsed before gross sales existed holds none.
+    /// The version lets the store refetch exactly those days once, without weakening the rule that
+    /// settled data is never re-requested for its own sake. Apple keeps daily reports for a year,
+    /// so this is possible; past that a day keeps whatever it was parsed with.
+    ///
+    /// 1 — gross customer sales (`Customer Price`, `Customer Currency`) and app SKUs.
+    public static let version = 1
+
     /// Product type identifiers that mean "someone acquired this app for the first time".
     ///
     /// Updates (`7`, `7F`, `7T`, `F7`) and re-downloads (`3`, `3F`) are units but not acquisitions.
@@ -72,6 +83,8 @@ public enum ReportParser {
         let appleID: Int?
         let sku: Int?
         let parentID: Int?
+        let customerPrice: Int?
+        let customerCurrency: Int?
 
         init(header: Substring) {
             var indices: [String: Int] = [:]
@@ -84,6 +97,8 @@ public enum ReportParser {
             // The parenthetical is stripped by `normalize`, so both spellings land here.
             proceeds = indices["developerproceeds"]
             currency = indices["currencyofproceeds"]
+            customerPrice = indices["customerprice"]
+            customerCurrency = indices["customercurrency"]
             title = indices["title"]
             appleID = indices["appleidentifier"]
             sku = indices["sku"]
@@ -127,7 +142,14 @@ public enum ReportParser {
                 sku: (sku.flatMap { Self.field(fields, $0) } ?? "")
                     .trimmingCharacters(in: .whitespaces),
                 parentID: (parentID.flatMap { Self.field(fields, $0) } ?? "")
-                    .trimmingCharacters(in: .whitespaces))
+                    .trimmingCharacters(in: .whitespaces),
+                // Absent from older report versions, and absent from a report Apple trims. Missing
+                // means "no gross figure for this row", never zero.
+                customerPrice: customerPrice
+                    .flatMap { Self.field(fields, $0) }
+                    .flatMap { Self.decimal($0) },
+                customerCurrency: (customerCurrency.flatMap { Self.field(fields, $0) } ?? "")
+                    .trimmingCharacters(in: .whitespaces).uppercased())
         }
 
         private static func field(_ fields: [Substring], _ index: Int) -> String? {
@@ -168,6 +190,24 @@ public enum ReportParser {
         let sku: String
         /// The SKU of the app this In-App Purchase belongs to. Empty for app rows.
         let parentID: String
+        /// What the customer paid, per unit, in `customerCurrency`. Nil when the report omits it.
+        let customerPrice: Decimal?
+        let customerCurrency: String
+
+        /// What the customer actually paid for this row, gross — before Apple's cut.
+        ///
+        /// **`|units| × price`, not `units × price`.** Apple states it plainly: "Refunds have
+        /// negative values for Units and Customer Price, and positive values for Developer
+        /// Proceeds" (`docs/REPORT_FORMAT.md`). So on a refund row *both* factors are negative and
+        /// multiplying them yields a positive number — a refund that adds to gross sales. The sign
+        /// of a customer-price row is carried by the price, and the units only say how many.
+        ///
+        /// This is the opposite convention to `proceeds`, where `units × perUnit` is correct
+        /// precisely because only the units are negative. The two must not be made to look alike.
+        var grossSales: Decimal? {
+            guard let customerPrice else { return nil }
+            return (units < 0 ? -units : units) * customerPrice
+        }
 
         /// Refund rows carry negative units and positive per-unit proceeds, so this subtracts on
         /// its own. Never take an absolute value of either half.
@@ -183,8 +223,10 @@ public enum ReportParser {
         var downloads: Decimal = 0
         var proceeds: [String: Decimal] = [:]
         var apps: [String: (title: String, downloads: Decimal, proceeds: [String: Decimal],
-                            units: [String: Decimal])] = [:]
+                            units: [String: Decimal], sku: String,
+                            sales: [String: Decimal])] = [:]
         var unitsByType: [String: Decimal] = [:]
+        var sales: [String: Decimal] = [:]
         var skipped = 0
 
         /// Which app a row's money belongs to.
@@ -221,15 +263,27 @@ public enum ReportParser {
                 proceeds[row.currency, default: 0] += amount
             }
 
+            // Gross, in the currency the customer paid in — a different currency from the one
+            // you're paid in, and often one the ECB doesn't publish.
+            if let gross = row.grossSales, gross != 0, !row.customerCurrency.isEmpty {
+                sales[row.customerCurrency, default: 0] += gross
+            }
+
             guard let owner = owner(of: row) else { return }
             var app = apps[owner.key] ?? (title: owner.title, downloads: 0, proceeds: [:],
-                                          units: [:])
+                                          units: [:], sku: "", sales: [:])
+            // Only an app's own row carries the app's SKU; an In-App Purchase row's SKU is the
+            // purchase's.
+            if row.parentID.isEmpty, !row.sku.isEmpty { app.sku = row.sku }
             // Prefer the title from a download row: In-App Purchase rows put the product ID in the
             // Title column, which is not the app's name.
             if row.isDownload, !row.title.isEmpty { app.title = row.title }
             if row.isDownload { app.downloads += row.units }
             if amount != 0, !row.currency.isEmpty {
                 app.proceeds[row.currency, default: 0] += amount
+            }
+            if let gross = row.grossSales, gross != 0, !row.customerCurrency.isEmpty {
+                app.sales[row.customerCurrency, default: 0] += gross
             }
             if !row.productType.isEmpty { app.units[row.productType, default: 0] += row.units }
             apps[owner.key] = app
@@ -239,7 +293,8 @@ public enum ReportParser {
             let summaries = apps
                 .map { AppSales(appleID: $0.key, title: $0.value.title,
                                 downloads: $0.value.downloads, proceeds: $0.value.proceeds,
-                                unitsByProductType: $0.value.units) }
+                                unitsByProductType: $0.value.units, sku: $0.value.sku,
+                                sales: $0.value.sales) }
                 // Sorted by Apple ID rather than by money, because sorting by proceeds needs a
                 // display currency and a rate table. The menu sorts; the parser just groups.
                 .sorted { $0.appleID < $1.appleID }
@@ -247,7 +302,8 @@ public enum ReportParser {
             return DaySales(date: date, origin: .observed, downloads: downloads,
                             proceeds: proceeds, apps: summaries,
                             fetchedAt: fetchedAt, skippedRows: skipped,
-                            unitsByProductType: unitsByType)
+                            unitsByProductType: unitsByType, sales: sales,
+                            parserVersion: ReportParser.version)
         }
     }
 }

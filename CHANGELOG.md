@@ -6,6 +6,106 @@ All notable changes to Vantage are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Analytics never produced a single number.** App Store Connect accepts a JWT `scope` claim naming
+  `GET` only; a write whose token carried one was answered `405 METHOD_NOT_ALLOWED` — the status for
+  a bad path, which is why this read as a wrong endpoint for a month. `ASCToken` now scopes reads and
+  leaves writes unscoped, limited by `aud` and the five-minute lifetime instead. The same bug would
+  have stopped every review reply from publishing.
+- **Every non-fatal analytics error was shown as "Apple is preparing your first report".** The panel
+  derived "still waiting" from `!stopsTheRun`, which answers a different question, so a hard HTTP
+  failure was presented as normal and Apple's own message was discarded. Waiting is now asked of the
+  error itself, in `VantageCore` where it is tested, and only Apple genuinely generating counts.
+  "Open Settings…" no longer appears for errors that have nothing to do with credentials.
+- **A gap longer than a week was permanent.** Each refresh asked for the newest 7 daily instances
+  whatever had been missed, so a fortnight away left days 8–14 unfetched forever even though Apple
+  still held them. Refreshes are now sized to the gap since the last one, capped at Apple's 35-day
+  retention.
+- **A report request Apple had stopped could never recover.** Apple stops generating for a request
+  nobody reads and refuses to restart one — `POST`ing over it is answered `409`. The stopped request
+  is now deleted and replaced, and says so rather than claiming to be a first report.
+
+### Changed
+
+- **Analytics refreshes in the background**, from the poll timer, wake and launch as well as opening
+  the panel, opening the section, and Refresh Now. Apple keeps daily instances for 35 days, so
+  history nobody collects is lost rather than late. `AnalyticsStore.maxAge` caps this at one to four
+  fetches a day however often the timer fires; only Refresh Now bypasses it.
+
+## [0.2.0] — 2026-08-21
+
+Vantage's dropdown is gone. The status item now opens a floating panel: an `NSMenu` row can't hold a
+chart, can't take a text field and can't navigate, which made it the ceiling for everything below.
+
+### Added
+
+- **A floating panel** behind the status item, with a slim icon rail for sections. Left click opens
+  it; right click keeps Refresh, Settings and Quit.
+- **A range control** — yesterday, 7 days, 30 days — governing the headline figure, the comparison
+  and the app rows. Remembered between launches.
+- **A chart** of any single series over 30 days, with the selected range shaded. A day Vantage never
+  fetched is drawn as a gap rather than a zero, the range always includes zero, and refund days keep
+  their sign.
+- **App detail**, reached by clicking an app row: that app's figures, its own chart, and its reviews.
+- **App icons** beside each row, from Apple's public storefront lookup.
+- **Customer reviews**, behind an optional second App Store Connect key with the App Manager role —
+  the sales key stays on its minimal role. Filter by rating and by unanswered.
+- **Replying to reviews**, off by default and behind an explicit consent step, because replying
+  needs an Admin key in practice. Nothing is published without confirming the exact text; replacing
+  an existing reply shows what will be overwritten, since Apple's endpoint is create-or-update and
+  will never tell you.
+- **Analytics** — App Store impressions, page views and the rate between them, which no sales report
+  contains.
+- **Settings**, rebuilt as three tabs of grouped forms with per-field state, instead of one 860pt
+  column.
+- **`vantage-cli`**, a read-only companion built beside the app. Subcommands for a terminal, and an
+  MCP server so Claude, ChatGPT and other agents can ask about your numbers. It holds no credentials
+  and opens no sockets — it reads the cache and nothing else, so an agent pointed at it can reason
+  about your figures and cannot touch your account.
+- **App Store ratings**, from the same lookup that already fetched each app's icon.
+- **A status strip across the top of every section** saying how current the figures are and when
+  they last arrived. A failed refresh used to be a grey line at the bottom of one section, which is
+  how a three-day-old panel could look like a working one.
+- **Conversion for currencies the ECB doesn't publish.** AED, SAR and QAR are fixed by their central
+  banks and convert exactly. Ten floating currencies start from a built-in estimate so the money
+  lands in your totals, and Settings takes a rate of your own for any of them. Every figure says
+  which of the four it rests on.
+
+### Changed
+
+- The menu bar title is unchanged, deliberately.
+- Per-app rows are no longer capped at eight, and are ranked by converted proceeds — or by units when
+  no rate table makes them comparable.
+- The panel reads 60 days from disk while still fetching 30, so month-over-month comparison works.
+
+### Fixed
+
+- Range totals were selected by position in the cache rather than by date, so a gap made "Last 7
+  days" reach back past the range and total days its own heading didn't cover.
+- Proceeds in a currency the ECB doesn't publish rendered as a converted `≈ $0.00` when a rate table
+  existed but didn't apply to any of them.
+- Comparisons measured raw totals across windows of different cached lengths, so eight flat days
+  read as a 600% rise.
+- `Fmt.wrap` and the eight-row cap are gone with the menu that needed them.
+- In-app purchases from an app that sold no units of its own that day appeared as a separate,
+  iconless app named after the app's SKU. They now fold back into the app they belong to.
+
+### Security
+
+- The network surface is now **five hosts**, all named in `SECURITY.md`. Two were added for app
+  icons and one for analytics report files — the last is a pre-signed Amazon S3 URL, the only
+  destination that isn't Apple's, fetched on a session that carries no credential and verified
+  against Apple's checksum before parsing.
+- Both places where a response body chooses the next URL — the artwork link and the reviews
+  `links.next` — are checked for host as well as scheme. Refusing redirects does nothing about a URL
+  the code elects to fetch.
+- Apple IDs and resource IDs that become filenames or URL path components are **validated, not
+  sanitized**. Stripping non-digits defeats a traversal while silently addressing a different real
+  app.
+- `docs/REVIEWS_API.md` previously claimed Apple's own documentation pages contradicted each other
+  about who may reply to a review. They don't; the correction is recorded in that file.
+
 First release, not yet tagged.
 
 ### Added

@@ -57,36 +57,105 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Fmt.downloadsWithArrow(Decimal(89)), "89↓")
     }
 
-    // MARK: - Wrapping
+    // MARK: - Pacific rendering, tested against another zone rather than by substring
 
-    /// NSMenu never wraps and sizes to its widest item, so an unwrapped error sentence stretches
-    /// the dropdown across the entire screen.
-    func testWrapKeepsEveryLineWithinTheLimit() {
-        let message = "This request requires an in-effect agreement that has not been signed "
-            + "or has expired. Sign it in App Store Connect › Business (Account Holder only)."
-        let lines = Fmt.wrap(message, width: 46)
-        XCTAssertGreaterThan(lines.count, 1)
-        for line in lines { XCTAssertLessThanOrEqual(line.count, 46, line) }
+    /// The old tests asserted `contains("2")` and `contains("2026")`, which a formatter set to
+    /// UTC+14 — a day ahead — also satisfies. This compares against reference formatters instead, so
+    /// it fails for the actual mistake: rendering a Pacific midnight in some other zone.
+    private func reference(_ zone: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        formatter.timeZone = TimeZone(identifier: zone)!
+        return formatter
     }
 
-    func testWrapLosesNoWords() {
-        let message = "Invalid vendor number specified for this request."
-        XCTAssertEqual(Fmt.wrap(message, width: 12).joined(separator: " "), message)
+    func testReportDateIsRenderedInPacificAndNotSomewhereElse() {
+        let date = ReportDate(year: 2026, month: 8, day: 1)
+        let rendered = Fmt.reportDate(date)
+
+        XCTAssertEqual(rendered, reference("America/Los_Angeles").string(from: date.startOfDay))
+        // Honolulu is two hours behind Pacific, so a Pacific midnight lands on the *previous* day
+        // there — which is exactly what everyone west of California would have seen.
+        XCTAssertNotEqual(rendered, reference("Pacific/Honolulu").string(from: date.startOfDay),
+                          "A Pacific midnight rendered in another zone names the wrong day")
     }
 
-    func testWrapLeavesShortTextAlone() {
-        XCTAssertEqual(Fmt.wrap("Fetching…"), ["Fetching…"])
+    func testSpanEndpointsAreRenderedInPacificToo() {
+        let start = ReportDate(year: 2026, month: 8, day: 1)
+        let end = ReportDate(year: 2026, month: 8, day: 19)
+        let span = Fmt.span(from: start, to: end)
+
+        // Honolulu would render the start as 31 July.
+        XCTAssertFalse(span.contains("31"), span)
+        XCTAssertFalse(span.contains("18"), span)
     }
 
-    func testWrapDoesntChopALongUnbrokenToken() {
-        // A filesystem path with no spaces: better one over-long row than an unreadable one split
-        // mid-path.
-        let path = "~/Library/Application_Support/Vantage/raw/2026-08-01.tsv"
-        XCTAssertEqual(Fmt.wrap(path, width: 20), [path])
+    // MARK: - Change, at the edges
+
+    func testChangeFromNothingToSomethingIsNew() {
+        XCTAssertEqual(Fmt.change(from: 0, to: 10), "new")
     }
 
-    func testWrapHandlesEmptyText() {
-        XCTAssertEqual(Fmt.wrap(""), [""])
+    /// A refund-only week after a week of nothing is not growth.
+    func testChangeFromNothingToARefundIsNotNew() {
+        XCTAssertNotEqual(Fmt.change(from: 0, to: -5), "new")
+    }
+
+    func testChangeFromNothingToNothingIsADash() {
+        XCTAssertEqual(Fmt.change(from: 0, to: 0), "—")
+    }
+
+    /// A negative baseline — a week that refunded more than it sold — must still produce a sane
+    /// direction rather than an inverted one.
+    func testChangeAgainstANegativeBaselineReadsAsARise() {
+        // From -10 to 10 is an improvement, and must not print as a fall.
+        XCTAssertTrue(Fmt.change(from: -10, to: 10).contains("▲"),
+                      Fmt.change(from: -10, to: 10))
+    }
+
+    func testChangeRoundsRatherThanTruncating() {
+        // 100 -> 126 is 26%.
+        XCTAssertEqual(Fmt.change(from: 100, to: 126), "▲ 26%")
+        XCTAssertEqual(Fmt.change(from: 100, to: 74), "▼ 26%")
+    }
+
+    func testAnUnchangedFigureSaysSoRatherThanShowingZeroPercent() {
+        XCTAssertEqual(Fmt.change(from: 100, to: 100), "— level")
+    }
+
+    // MARK: - Spans
+
+    func testASpanOfOneDayIsJustThatDay() {
+        let date = ReportDate(year: 2026, month: 8, day: 19)
+        XCTAssertEqual(Fmt.span(from: date, to: date), Fmt.reportDate(date))
+    }
+
+    /// "22 Jul – 19 Aug" rather than "22 Jul 2026 – 19 Aug 2026": twice the width for one bit of
+    /// information, in a corner of the card that has none to spare.
+    func testASpanWithinOneYearDropsTheYear() {
+        let span = Fmt.span(from: ReportDate(year: 2026, month: 7, day: 22),
+                            to: ReportDate(year: 2026, month: 8, day: 19))
+        XCTAssertFalse(span.contains("2026"), span)
+        XCTAssertTrue(span.contains("–"), span)
+    }
+
+    /// A span crossing new year is exactly when the year matters.
+    func testASpanCrossingYearsKeepsBothYears() {
+        let span = Fmt.span(from: ReportDate(year: 2025, month: 12, day: 20),
+                            to: ReportDate(year: 2026, month: 1, day: 5))
+        XCTAssertTrue(span.contains("2025"), span)
+        XCTAssertTrue(span.contains("2026"), span)
+    }
+
+    /// Same trap as `reportDate`: these are Pacific midnights, and rendering them in the viewer's
+    /// zone would print the previous day for anyone west of California.
+    func testSpanEndsAreRenderedInPacific() {
+        let span = Fmt.span(from: ReportDate(year: 2026, month: 8, day: 1),
+                            to: ReportDate(year: 2026, month: 8, day: 19))
+        XCTAssertTrue(span.contains("1"), span)
+        XCTAssertTrue(span.contains("19"), span)
     }
 
     // MARK: - Dates

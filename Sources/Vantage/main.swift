@@ -4,7 +4,9 @@ import VantageCore
 /// Wiring: a provider, a cache, exchange rates, and a timer that only fires when Apple might
 /// actually have something new.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let menuController = MenuController()
+    private let statusItemController = StatusItemController()
+    private let panelModel = PanelModel()
+    private lazy var panel = PanelController(model: panelModel)
     private let settingsWindow = SettingsWindow()
     private let store = ReportStore()
     private let fx = FX()
@@ -14,9 +16,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pollTimer: Timer?
     private var isFetching = false
 
-    /// How far back the first run reaches. Enough for the 7- and 30-day rows and no further; Apple
-    /// keeps daily reports for a year, so a wider net is possible but pointless.
+    /// How far back the first run *fetches*. Enough for the 7- and 30-day rows and no further;
+    /// Apple keeps daily reports for a year, so a wider net is possible but pointless.
     private static let backfillDays = 30
+
+    /// How far back the panel *reads from disk*. Wider than the backfill on purpose and free —
+    /// this is a cache read, not a request.
+    ///
+    /// Without it the "vs previous 30 days" comparison could never appear: rendering loaded exactly
+    /// thirty days, so the thirty days before them were never in hand and the comparison was
+    /// structurally dead. Days accumulate as the app runs, so it fills in on its own.
+    private static let renderDays = 60
 
     override init() {
         backfill = Backfill(provider: ASCClient(), store: ReportStore())
@@ -27,26 +37,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)  // Menu bar only, no dock icon.
         MainMenu.install()  // Without this, ⌘V doesn't work in the Settings fields.
 
-        menuController.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
-        menuController.onSettings = { [weak self] in self?.settingsWindow.show() }
-        menuController.onMetricsChanged = { [weak self] in self?.render() }
+        statusItemController.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
+        statusItemController.onSettings = { [weak self] in self?.settingsWindow.show() }
+        statusItemController.onTogglePanel = { [weak self] button in
+            self?.panel.toggle(relativeTo: button)
+        }
+        // A right-click menu on top of an open panel is two overlapping surfaces saying different
+        // things about the same data.
+        statusItemController.onWillShowMenu = { [weak self] in self?.panel.close() }
+
+        panelModel.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
+        panelModel.onSettings = { [weak self] in self?.settingsWindow.show() }
+        panelModel.onMetricsChanged = { [weak self] in self?.render() }
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
         settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
+        settingsWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
+        settingsWindow.unpricedCurrencies = { [weak self] in self?.unpricedCurrencies() ?? [] }
         settingsWindow.testConnection = { [weak self] completion in
             self?.testConnection(completion) }
 
         Notifier.requestAuthorizationIfNeeded()
-        rates = fx.cached()  // Whatever's on disk, so the first render isn't blank.
+        // Whatever's on disk, so the first render isn't blank — with the user's own rates for any
+        // currency nothing publishes one for.
+        rates = fx.cached()?.applying(manualRates: Prefs.manualRates)
+
+        // Registered before the credentials guard: a first-launch user who sets up credentials in
+        // the window this guard opens would otherwise get no wake refresh for the whole session.
+        //
+        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
+        // window it slept through. Ask again the moment it wakes.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
 
         guard KeychainStore.hasCredentials else {
             // First launch: nothing to show and nothing to fetch, so open the one window that
             // fixes that rather than sitting there displaying a dash.
-            menuController.showNoCredentials()
+            statusItemController.showNoCredentials()
+            panelModel.showNoCredentials()
             settingsWindow.show()
             return
         }
         render()
         refresh(userInitiated: false)
+
 
         // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
         // window it slept through. Ask again the moment it wakes.
@@ -58,32 +91,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func preferencesChanged() {
         Notifier.requestAuthorizationIfNeeded()
+        // A changed manual rate re-prices everything on screen without refetching anything.
+        rates = rates?.applying(manualRates: Prefs.manualRates)
         render()
+    }
+
+    /// Currencies in the cache with no real rate behind them — no ECB rate, no central-bank peg.
+    ///
+    /// Offered in Settings so the user can supply a rate for exactly the currencies that need one,
+    /// rather than being shown a list of every currency in the world.
+    private func unpricedCurrencies() -> [String] {
+        guard let rates else { return [] }
+        var codes: Set<String> = []
+        for day in store.loadAll(renderWindow) {
+            for (code, amount) in day.proceeds where amount != 0 {
+                // `needsUserRate`, not `canConvert`: a built-in estimate makes a currency
+                // convertible, and that is precisely when a real rate is most worth asking for.
+                if rates.needsUserRate(code) { codes.insert(code.uppercased()) }
+            }
+        }
+        return codes.sorted()
     }
 
     // MARK: - Rendering
 
-    private var window: [ReportDate] { ReportDate.yesterday().lastDays(Self.backfillDays) }
+    /// The dates to fetch.
+    private var fetchWindow: [ReportDate] { ReportDate.yesterday().lastDays(Self.backfillDays) }
+    /// The dates to render from cache.
+    private var renderWindow: [ReportDate] { ReportDate.yesterday().lastDays(Self.renderDays) }
 
     /// Renders from disk. Instant, offline, and the reason a relaunch or a metric toggle doesn't
     /// wait on the network.
     private func render(error: Error? = nil) {
-        menuController.update(days: store.loadAll(window), rates: rates, error: error)
+        let days = store.loadAll(renderWindow)
+        statusItemController.update(days: days, rates: rates, error: error)
+        panelModel.update(days: days, rates: rates, error: error)
     }
 
     // MARK: - Fetching
 
     private func refresh(userInitiated: Bool) {
+        // Registered before the credentials guard: a first-launch user who sets up credentials in
+        // the window this guard opens would otherwise get no wake refresh for the whole session.
+        //
+        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
+        // window it slept through. Ask again the moment it wakes.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
+
         guard KeychainStore.hasCredentials else {
-            menuController.showNoCredentials()
+            statusItemController.showNoCredentials()
+            panelModel.showNoCredentials()
+            panelModel.refreshFinished(succeeded: false)
             return
         }
+        // Analytics rides **every** refresh, background ones included — so a Mac sitting in the
+        // menu bar keeps its history current without anyone opening anything.
+        //
+        // What makes that affordable is the staleness gate rather than restraint about when to ask.
+        // `refresh` is the launch, wake and poll-timer path, and `Schedule.nextPoll` fires hourly
+        // only while chasing a report that's due, otherwise once at the next morning window — but
+        // `AnalyticsStore.maxAge` is the real limit, so this settles at one to four fetches a day
+        // however often the timer fires. Analytics data moves daily; anything tighter would re-pull
+        // the same numbers.
+        //
+        // `force` only when the user asked. Clicking Refresh means now, not "if the six-hour cache
+        // agrees"; a timer firing does not get to say that. It sits above the `isFetching` guard
+        // because a sales backfill already in flight says nothing about whether analytics is worth
+        // fetching, and `days` is populated by the `render()` that precedes the launch refresh, so
+        // there is always an app list to work from.
+        panelModel.loadAnalytics(force: userInitiated)
+
         guard !isFetching else { return }  // Refresh Now during a backfill shouldn't double it.
         isFetching = true
+        panelModel.refreshStarted()
 
         refreshRates { [weak self] in
             guard let self else { return }
-            self.backfill.run(dates: self.window, userInitiated: userInitiated, onDay: { day in
+            self.backfill.run(dates: self.fetchWindow, userInitiated: userInitiated,
+                              onDay: { day in
                 DispatchQueue.main.async {
                     // Days land independently, so the menu fills in as they arrive.
                     self.render()
@@ -92,6 +178,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }, completion: { error in
                 DispatchQueue.main.async {
                     self.isFetching = false
+                    // A refresh that reached Apple counts as a success even when it added no days:
+                    // "nothing new" is an answer, and the panel needs to say when it last got one.
+                    self.panelModel.refreshFinished(succeeded: error == nil)
                     self.render(error: error)
                     self.reschedule()
                 }
@@ -104,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 // A failed rates fetch is not a failed refresh: sales figures matter more than the
                 // currency they're shown in, and the menu says when conversion is unavailable.
-                if let rates { self?.rates = rates }
+                if let rates { self?.rates = rates.applying(manualRates: Prefs.manualRates) }
                 next()
             }
         }
@@ -133,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window the answer cannot change, so asking is pure noise.
     private func reschedule() {
         pollTimer?.invalidate()
-        let newest = store.loadAll(window).map(\.date).max()
+        let newest = store.loadAll(renderWindow).map(\.date).max()
         let next = Schedule.nextPoll(newestCached: newest)
 
         let timer = Timer(fireAt: next, interval: 0, target: self,

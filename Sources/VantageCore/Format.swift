@@ -22,7 +22,19 @@ public enum Fmt {
         format(amount, currency: currency, fractionDigits: 2)
     }
 
-    private static func format(_ amount: Decimal, currency: String, fractionDigits: Int) -> String {
+    /// Currency formatters are expensive to build and there are only a handful of
+    /// (currency, precision) pairs in play, so they're built once and reused.
+    ///
+    /// A panel render formats money roughly twice per app row; at a few hundred apps that was
+    /// hundreds of `NumberFormatter` constructions per frame, and the panel rerenders every time an
+    /// app icon arrives. `NumberFormatter` is not thread-safe, so this is confined to the main
+    /// thread — which is where every caller already is, since all of them are rendering.
+    private static var currencyFormatters: [String: NumberFormatter] = [:]
+
+    private static func currencyFormatter(_ currency: String,
+                                          _ fractionDigits: Int) -> NumberFormatter {
+        let key = "\(currency)|\(fractionDigits)"
+        if let cached = currencyFormatters[key] { return cached }
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         formatter.locale = .current
@@ -31,6 +43,20 @@ public enum Fmt {
         formatter.maximumFractionDigits = fractionDigits
         // Bankers' rounding would make daily totals that don't sum to the weekly one.
         formatter.roundingMode = .halfUp
+        currencyFormatters[key] = formatter
+        return formatter
+    }
+
+    private static let unitFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = .current
+        formatter.maximumFractionDigits = 0
+        return formatter
+    }()
+
+    private static func format(_ amount: Decimal, currency: String, fractionDigits: Int) -> String {
+        let formatter = currencyFormatter(currency, fractionDigits)
         // NSDecimalNumber, not Double: the whole point of carrying Decimal this far is not to
         // hand the money to binary floating point at the last step.
         let number = NSDecimalNumber(decimal: amount)
@@ -51,11 +77,7 @@ public enum Fmt {
                 roundingMode: .plain, scale: 0,
                 raiseOnExactness: false, raiseOnOverflow: false,
                 raiseOnUnderflow: false, raiseOnDivideByZero: false))
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.locale = .current
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: rounded) ?? rounded.stringValue
+        return unitFormatter.string(from: rounded) ?? rounded.stringValue
     }
 
     /// `89↓`, for the menu bar and the per-app rows.
@@ -63,12 +85,69 @@ public enum Fmt {
         downloads(units) + downloadArrow
     }
 
+    /// How long ago something happened, in words. "just now", "3 minutes ago", "2 days ago".
+    ///
+    /// Relative rather than a clock time, because the question this answers is "is what I'm looking
+    /// at current?" — and "14:32" only answers that if you also know what time it is now.
+    public static func relative(_ date: Date, from now: Date = Date()) -> String {
+        let seconds = now.timeIntervalSince(date)
+        // Under a minute reads as "just now" rather than "0 minutes ago", which sounds broken.
+        if seconds < 60 { return "just now" }
+        // A future date means the clock moved, not that something is scheduled. Don't say
+        // "in 3 hours" about a fetch that already happened.
+        if seconds < 0 { return "just now" }
+        return relativeFormatter.localizedString(for: date, relativeTo: now)
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = .current
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
+    /// An App Store rating, to one decimal place. `4.7`.
+    ///
+    /// One decimal because that is how the App Store itself writes it, and because whole stars
+    /// throw away the only thing that moves.
+    public static func rating(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = .current
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        return formatter.string(from: NSDecimalNumber(decimal: value))
+            ?? NSDecimalNumber(decimal: value).stringValue
+    }
+
+    /// A rate, to one decimal place. `3.4%`.
+    ///
+    /// One decimal rather than none: page view rates live in the low single digits, and rounding
+    /// 3.4% and 2.6% both to "3%" hides the only movement there is.
+    public static func percent(_ value: Decimal) -> String {
+        let rounded = NSDecimalNumber(decimal: value).rounding(
+            accordingToBehavior: NSDecimalNumberHandler(
+                roundingMode: .plain, scale: 1, raiseOnExactness: false, raiseOnOverflow: false,
+                raiseOnUnderflow: false, raiseOnDivideByZero: false))
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = .current
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        return (formatter.string(from: rounded) ?? rounded.stringValue) + "%"
+    }
+
     /// A day against a baseline: `▲ 24%`, `▼ 8%`, or `—` when there's nothing to compare with.
     ///
     /// Percentages of a zero baseline are undefined, not infinite, and a day's first sale is not a
     /// hundred-percent rise — so those cases say "new" rather than inventing a number.
     public static func change(from baseline: Decimal, to value: Decimal) -> String {
-        guard baseline != 0 else { return value == 0 ? "—" : "new" }
+        // A week that only refunded is not growth. "new" is for a first sale, so it needs the
+        // value to actually be positive.
+        guard baseline != 0 else {
+            if value == 0 { return "—" }
+            return value > 0 ? "new" : "down from nothing"
+        }
         let ratio = (value - baseline) / abs(baseline) * 100
         let rounded = NSDecimalNumber(decimal: ratio).rounding(
             accordingToBehavior: NSDecimalNumberHandler(
@@ -78,36 +157,6 @@ public enum Fmt {
         return rounded > 0 ? "▲ \(rounded)%" : "▼ \(abs(rounded))%"
     }
 
-    // MARK: - Menu text
-
-    /// Breaks a long message into menu-width lines.
-    ///
-    /// `NSMenu` sizes itself to its widest item and never wraps, so a single long sentence stretches
-    /// the dropdown clear across the screen. Apple's error strings are long sentences. Wrapping at a
-    /// fixed column keeps a menu the width of a menu.
-    ///
-    /// Measured in characters rather than points, which is approximate — but the menu is one font
-    /// at one size, and being roughly right here is worth more than the layout pass it would take
-    /// to be exactly right.
-    public static func wrap(_ text: String, width: Int = 46) -> [String] {
-        var lines: [String] = []
-        var current = ""
-        for word in text.split(separator: " ", omittingEmptySubsequences: true) {
-            if current.isEmpty {
-                current = String(word)
-            } else if current.count + 1 + word.count <= width {
-                current += " " + word
-            } else {
-                lines.append(current)
-                current = String(word)
-            }
-        }
-        if !current.isEmpty { lines.append(current) }
-        // A single word longer than the limit — a filesystem path, typically — is left whole
-        // rather than chopped mid-token, which would make it unreadable and unselectable.
-        return lines.isEmpty ? [text] : lines
-    }
-
     // MARK: - Dates
 
     /// A report date, written the way the reader's region writes dates. Medium style, so
@@ -115,6 +164,26 @@ public enum Fmt {
     /// continents — this string exists specifically to remove ambiguity about which day is meant.
     public static func reportDate(_ date: ReportDate) -> String {
         dayFormatter.string(from: date.startOfDay)
+    }
+
+    /// A span of report days, for a header that covers more than one.
+    ///
+    /// Drops the year while both ends share it — "22 Jul – 19 Aug" rather than
+    /// "22 Jul 2026 – 19 Aug 2026", which is twice the width for one bit of information. A span
+    /// crossing new year keeps both years, because that's exactly when the year matters.
+    public static func span(from start: ReportDate, to end: ReportDate) -> String {
+        guard start != end else { return reportDate(start) }
+        if start.year == end.year {
+            return "\(shortDayFormatter.string(from: start.startOfDay))"
+                + " – \(shortDayFormatter.string(from: end.startOfDay))"
+        }
+        return "\(reportDate(start)) – \(reportDate(end))"
+    }
+
+    /// A review's date. A real instant rather than a report day, so it stays in the local zone —
+    /// unlike everything derived from a sales report, which is Pacific.
+    public static func reviewDate(_ date: Date) -> String {
+        reviewDateFormatter.string(from: date)
     }
 
     /// Local wall-clock time in the user's 12- or 24-hour preference, for "fetched HH:mm".
@@ -131,6 +200,24 @@ public enum Fmt {
         // print the previous day for anyone west of Pacific and, worse, would be right most of the
         // time — so it would only be wrong occasionally, which is harder to notice.
         formatter.timeZone = ReportDate.pacific
+        return formatter
+    }()
+
+    private static let shortDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        // Template rather than a literal pattern: "d MMM" and "MMM d" are both right, in different
+        // regions, and the template picks whichever the reader expects.
+        formatter.setLocalizedDateFormatFromTemplate("dMMM")
+        formatter.timeZone = ReportDate.pacific
+        return formatter
+    }()
+
+    private static let reviewDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
         return formatter
     }()
 

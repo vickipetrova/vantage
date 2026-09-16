@@ -17,14 +17,18 @@ final class ReportStoreTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    /// `parserVersion` defaults to the current one: these tests are about origin, and a day read
+    /// by an older parser is refetched regardless of origin — which has its own tests below.
     private func day(_ date: ReportDate, origin: DaySales.Origin = .observed,
-                     downloads: Decimal = 42) -> DaySales {
+                     downloads: Decimal = 42,
+                     parserVersion: Int = ReportParser.version) -> DaySales {
         DaySales(date: date, origin: origin, downloads: downloads,
                  proceeds: ["USD": Decimal(string: "12.34")!],
                  apps: [AppSales(appleID: "1111111111", title: "App One",
                                  downloads: downloads,
                                  proceeds: ["USD": Decimal(string: "12.34")!])],
-                 fetchedAt: Date(timeIntervalSince1970: 1_800_000_000), skippedRows: 1)
+                 fetchedAt: Date(timeIntervalSince1970: 1_800_000_000), skippedRows: 1,
+                 parserVersion: parserVersion)
     }
 
     private let date = ReportDate(year: 2026, month: 8, day: 1)
@@ -104,6 +108,26 @@ final class ReportStoreTests: XCTestCase {
         store.save(day(date, origin: .assumedZero, downloads: 0))
         XCTAssertFalse(store.needsFetch(date))
         XCTAssertTrue(store.needsFetch(date, userInitiated: true))
+    }
+
+    /// A day's *report* is immutable; our reading of it is not. A day parsed before the parser
+    /// learned to read gross customer sales holds none, and no amount of waiting will add it — so
+    /// it is refetched once, and exactly once.
+    func testADayReadByAnOlderParserIsRefetchedOnce() {
+        store.save(day(date, origin: .observed, parserVersion: 0))
+        XCTAssertTrue(store.needsFetch(date), "an incomplete parse is worth one more request")
+
+        // Re-read by the current parser, it settles down again.
+        store.save(day(date, origin: .observed, parserVersion: ReportParser.version))
+        XCTAssertFalse(store.needsFetch(date))
+        XCTAssertFalse(store.needsFetch(date, userInitiated: true))
+    }
+
+    /// The rule still holds for the case it was written for — this must not become a licence to
+    /// refetch settled days for any other reason.
+    func testAStaleParseIsTheOnlyThingThatOverridesImmutability() {
+        store.save(day(date, origin: .observed, parserVersion: ReportParser.version + 1))
+        XCTAssertFalse(store.needsFetch(date), "a newer parse than ours is still complete enough")
     }
 
     func testAnUncachedDayAlwaysNeedsFetching() {

@@ -1,0 +1,134 @@
+import SwiftUI
+import VantageCore
+
+/// The panel's frame: a slim icon rail on the leading edge, content beside it.
+struct PanelRootView: View {
+    @ObservedObject var model: PanelModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RailView(model: model)
+            Divider().opacity(0.5)
+            VStack(spacing: 0) {
+                // Above the section, not below it, and in every section rather than one. A failure
+                // buried under the Overview's footnotes went unnoticed for three days.
+                StatusBar(model: model)
+                Divider().opacity(0.35)
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        // Fills whatever the window gives it and never asks for more. Without the clamp, any
+        // wrapping text inside reports a minimum height that NSHostingView passes to the window,
+        // and the panel grows to fit its own contents instead of staying the size the route asked
+        // for.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // The window's backdrop provides the background. Anything opaque here would cover it and
+        // turn the panel into a plain grey box.
+        .background(Color.clear)
+        // Clipped to the same radius the backdrop uses. The backdrop shapes *itself*, but nothing
+        // was shaping the SwiftUI drawn on top of it — so the rail's divider, the status strip's
+        // tint and the card fills all ran square into the corners and showed as four hard edges
+        // just inside the rounded ones.
+        .clipShape(RoundedRectangle(cornerRadius: Theme.panelCorner, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        // Keyed on the route so SwiftUI treats a navigation as a change of view rather than a
+        // reconfiguration of the old one — otherwise scroll position and focus leak across
+        // sections.
+        Group {
+            switch model.route {
+            case .overview:
+                OverviewView(model: model)
+            case .appDetail(let appleID):
+                AppDetailView(model: model, appleID: appleID)
+            case .reviews:
+                ReviewsView(model: model)
+            case .analytics:
+                AnalyticsView(model: model)
+            }
+        }
+        .id(model.route)
+        .transition(.opacity)
+        .animation(.easeOut(duration: 0.18), value: model.route)
+    }
+}
+
+// MARK: - Rail
+
+private struct RailView: View {
+    @ObservedObject var model: PanelModel
+
+    var body: some View {
+        VStack(spacing: Theme.Space.tight) {
+            ForEach(PanelRoute.railOrder, id: \.self) { route in
+                RailButton(route: route,
+                           isSelected: model.route.railSelection == route) {
+                    model.navigate(to: route)
+                }
+            }
+            Spacer(minLength: 0)
+            RailCommand(symbol: "arrow.clockwise", help: "Refresh Now") { model.onRefresh?() }
+            RailCommand(symbol: "gearshape", help: "Settings…") { model.onSettings?() }
+        }
+        .padding(.vertical, Theme.Space.row)
+        .frame(width: Theme.railWidth)
+        .frame(maxHeight: .infinity)
+    }
+}
+
+private struct RailButton: View {
+    let route: PanelRoute
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: route.symbol)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 36, height: 30)
+                .foregroundColor(isSelected ? Color.accentColor : .secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isSelected ? Color.accentColor.opacity(0.14)
+                                         : Color.primary.opacity(isHovering ? 0.07 : 0))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(route.label)
+        .accessibilityLabel(route.label)
+    }
+}
+
+/// A rail item that runs a command rather than navigating. Same shape, never selected.
+private struct RailCommand: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 36, height: 30)
+                .foregroundColor(.secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.primary.opacity(isHovering ? 0.07 : 0))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}

@@ -39,20 +39,51 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/Backfill.swift` | Fetches missing days, newest first |
 | `Sources/VantageCore/Schedule.swift` | When to poll, and when a report deserves a notification |
 | `Sources/VantageCore/Metric.swift` | Which product types count as what |
-| `Sources/VantageCore/FX.swift` | ECB rates fetch, parse and conversion |
-| `Sources/VantageCore/KeychainStore.swift` | Credential storage |
+| `Sources/VantageCore/FX.swift` | ECB rates fetch, parse, conversion, and the hard USD pegs |
+| `Sources/VantageCore/KeychainStore.swift` | Credential storage — two independent keys |
+| `Sources/VantageCore/ASCToken.swift` | The ES256 JWT, shared by both clients |
+| `Sources/VantageCore/Review.swift` | Review models, and JSON:API → `CustomerReview` |
+| `Sources/VantageCore/ReviewsProvider.swift` | The reviews seam, and `ReviewsError` |
+| `Sources/VantageCore/ASCReviewsClient.swift` | Reads reviews. Read-only, by type |
+| `Sources/VantageCore/ReviewStore.swift` | TTL cache of reviews — **not** an archive |
 | `Sources/VantageCore/Prefs.swift` | UserDefaults-backed preferences |
-| `Sources/VantageCore/Format.swift` | Currency, unit counts, dates, menu-width wrapping |
-| `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on both hosts |
-| `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → menu, rates, poll timer, wake |
-| `Sources/Vantage/MenuController.swift` | Status item: title, dropdown, Metrics submenu |
+| `Sources/VantageCore/Format.swift` | Currency, unit counts, dates and spans |
+| `Sources/VantageCore/Money.swift` | Per-currency proceeds → one printable figure, honestly |
+| `Sources/VantageCore/OverviewModel.swift` | Everything the Overview section shows, per range |
+| `Sources/VantageCore/Trend.swift` | Chart series: gaps, normalization, negatives |
+| `Sources/VantageCore/AppDetailModel.swift` | One app's slice, narrowed then handed to `OverviewModel` |
+| `Sources/VantageCore/ReplyDraft.swift` | Where confirm-before-send is enforced, as a state machine |
+| `Sources/VantageCore/ASCReviewsWriter.swift` | The only type that can publish a reply |
+| `Sources/VantageCore/Analytics.swift` | Analytics models, JSON:API decoding, the S3 host check |
+| `Sources/VantageCore/ASCAnalyticsClient.swift` | The four-step analytics lifecycle |
+| `Sources/VantageCore/SegmentParser.swift` | Gzipped TSV → `EngagementDay` |
+| `Sources/VantageCore/AnalyticsStore.swift` | Merging archive, and how many instances a refresh needs |
+| `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
+| `Sources/VantageCore/CacheQuery.swift` | Read-only answers about the cache, for the CLI and MCP |
+| `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on every host |
+| `Sources/VantageCLI/main.swift` | `vantage-cli` — subcommands over `CacheQuery` |
+| `Sources/VantageCLI/MCPServer.swift` | MCP over stdio, newline-delimited JSON-RPC |
+| `Sources/Vantage/main.swift` | `AppDelegate`: provider → store → panel, rates, poll timer, wake |
+| `Sources/Vantage/StatusItemController.swift` | Status item: the title, and left/right click |
+| `Sources/Vantage/Panel/PanelWindow.swift` | The non-activating `NSPanel` |
+| `Sources/Vantage/Panel/PanelController.swift` | Anchoring, dismissal, size animation, backdrop |
+| `Sources/Vantage/Panel/PanelModel.swift` | What the panel renders; the views read only this |
+| `Sources/Vantage/Panel/OverviewView.swift` | The Overview section |
+| `Sources/Vantage/Panel/TrendChart.swift` | The chart, drawn with `Path` |
+| `Sources/Vantage/Panel/ReviewsView.swift` | Reviews, portfolio-wide or per app |
+| `Sources/Vantage/Panel/ReplyComposer.swift` | The composer and the confirmation sheet |
 | `Sources/Vantage/SettingsWindow.swift` | Credentials and preferences, programmatic AppKit |
 | `Sources/Vantage/MainMenu.swift` | The Edit menu — without it ⌘V doesn't work anywhere |
 | `Sources/Vantage/Notifier.swift` | The morning notification |
 | `Sources/Vantage/LaunchAtLogin.swift` | `SMAppService` proxy |
 
-`MenuController` renders `[DaySales]` and a rate table. No App Store Connect strings in it — that's
-what makes a second `SalesProvider` (RevenueCat, eventually) one new file.
+`PanelModel` is handed `[DaySales]` and a rate table; the SwiftUI views read it and compute nothing.
+No App Store Connect strings in either — that's what makes a second `SalesProvider` (RevenueCat,
+eventually) one new file.
+
+**The views are dumb on purpose.** Every figure on screen is built by a `VantageCore` type —
+`Money`, `OverviewModel`, `Trend` — so `swift test` covers it. A calculation that creeps into a
+`View` is a calculation nothing can test; put it in Core and pass the result in.
 
 ## Hard rules
 
@@ -65,9 +96,87 @@ what makes a second `SalesProvider` (RevenueCat, eventually) one new file.
 3. **Money is `Decimal`.** Never `Double`, not even briefly, not even for a sort key.
 4. **All TSV parsing degrades gracefully.** A malformed row is skipped and counted in
    `DaySales.skippedRows`. Unknown product types count toward proceeds, never toward downloads.
-5. **Two network destinations**, enforced by `NoRedirects` rather than merely documented.
+5. **Five network destinations**, enforced by `NoRedirects` rather than merely documented:
+   App Store Connect, the ECB, `itunes.apple.com` and `*.mzstatic.com` for app icons, and
+   `*.amazonaws.com` for analytics report files. Adding a sixth means changing `SECURITY.md`, which
+   states all five and what each carries.
+
+   **`*.amazonaws.com` is the only one that isn't Apple's**, and the only one that can't be named
+   exactly — Apple serves analytics segments as pre-signed S3 URLs whose bucket and region vary. It
+   is fetched on a session with no additional headers at all, so no token can reach it, and the
+   bytes are checksummed before parsing.
+
+   **Two places take a URL from a response body and then fetch it**: the icon lookup's
+   `artworkUrl*`, and the reviews API's `links.next`. Both are checked for `https` **and** an
+   expected host before being requested — redirect refusal does nothing about a URL the code elects
+   to fetch, so without those checks "four destinations" would be a description of current behaviour
+   rather than a guarantee. `links.next` is the stricter of the two: it carries a bearer token, so
+   it's an exact host match.
 6. **`build.sh` signs ad-hoc only.** It must never handle a Developer ID or notarization
    credentials. Releasing is a manual maintainer step — see `docs/RELEASING.md`.
+
+## The CLI
+
+`vantage-cli` is a third target, built by `build.sh` beside the app. It exists for people at a
+terminal and for AI agents over MCP (`vantage-cli mcp`).
+
+**It must stay read-only.** It links `VantageCore` and goes through `CacheQuery`, which opens cache
+files and nothing else. Do not give it Keychain access, a `URLSession`, or a write path — an agent
+calls it without asking anyone, and "holds no credentials" is the whole reason that's safe. An
+earlier `status` read `KeychainStore.hasReviewsKey` and hung the binary on a GUI keychain prompt,
+which is what that mistake looks like when you make it.
+
+The target is `VantageCLI` producing a product named `vantage-cli`, **not** `vantage`: macOS
+filesystems are case-insensitive by default, so a `vantage` binary and the app's `Vantage` binary
+are the same path and the link step collides.
+
+MCP's stdio transport is newline-delimited JSON-RPC, so **nothing may be written to stdout that
+isn't a message.** A stray `print` corrupts the stream and the client drops the connection.
+Diagnostics go to stderr.
+
+## Two keys
+
+Vantage holds a **sales key** (required, Sales and Reports role) and an optional **reviews key**
+(App Manager). They are separate Keychain items, separate types, and each client is constructed with
+its own credentials closure — so neither can be used for the other's work by accident.
+
+`docs/REVIEWS_API.md` is the verified reference. The short version: **App Manager can read reviews
+and cannot answer them** — Apple's role matrix, its help pages and the `UserRole` enum all agree on
+that. Replying is Account Holder, Admin or Customer Support, and for an API key that means Admin in
+practice. **Read it before touching `ReviewDecoder` or `ASCReviewsClient`.**
+
+That file also carries a correction worth knowing about: it previously claimed Apple's pages
+*contradicted* each other on this point, and three other documents cited that as a reason to trust
+it. The claim came from a summarised read that conflated the "View ratings and reviews" row with the
+"Respond to customer reviews" row. **Check Apple's raw pages, not a summary of them, before writing
+"Apple's docs disagree" anywhere.**
+
+Reviews are **per app** — there is no portfolio endpoint — so a portfolio view is one request per
+app. That's why they're fetched when the section is opened and never from the poll timer.
+
+## Analytics
+
+`docs/ANALYTICS_API.md` is the reference. The short version: nothing about that API is one request —
+create a report request (**Admin only**), wait 24–48 hours, list reports, list instances, list
+segments, download each from a pre-signed S3 URL that expires in **five minutes**.
+
+Three things that bite:
+
+- **`processingDate` is not the date the data describes.** The rows carry their own `Date` column.
+- **Instances are kept 35 days.** `AnalyticsStore` merges rather than replaces, so older days exist
+  only in Vantage's copy. Each refresh asks for as many instances as the gap since the last one
+  needs (`AnalyticsStore.instancesNeeded`), capped at those 35 — a fixed count silently abandons
+  every day older than the cap, which is what a hardcoded 7 did here.
+- **Analytics fetches in the background**, from every `refresh(userInitiated:)` — launch, wake and
+  poll timer included — and from panel-open and Refresh Now. That reverses the original
+  section-open-only rule on purpose: Apple deletes instances after 35 days, so uncollected history
+  is gone rather than late. `AnalyticsStore.maxAge`, not caller restraint, is what caps the cost.
+- **A `stoppedDueToInactivity` request must be deleted, not written over.** Apple answers a `POST`
+  over one with `409`, so the naive "filter it out and create" loops forever on
+  "Apple is preparing your first report". See `AnalyticsRequestDecision`.
+- **Swift treats `\r\n` as one `Character`**, so `split(separator: "\n")` never matches it.
+  Normalize line endings first, as `ReportParser` does. `SegmentParser` shipped with this wrong and
+  a test caught it.
 
 ## The report format
 
@@ -122,6 +231,28 @@ Two things here that were fixed the hard way and are easy to undo:
 - **Every path out of the file picker reports something.** Cancelled, unreadable, wrong file. A
   picker that appears to do nothing is indistinguishable from a broken button.
 
+## The panel
+
+`PanelWindow` is a **non-activating** `NSPanel`, not an `NSPopover`. A popover in an `LSUIElement`
+app can't hold first responder for typing without `NSApp.activate(ignoringOtherApps:)`, which makes
+Vantage frontmost just to read a number — unacceptable, and fatal for the review reply composer
+planned in v0.2. `.nonactivatingPanel` plus `canBecomeKey` takes keyboard without activating. The
+cost is that anchoring, click-outside dismissal and Esc are hand-written in `PanelController`.
+
+Two things there that were found the hard way:
+
+- **`window.level` must not be `.popUpMenu`.** At that level the window server stops applying
+  behind-window backdrop filters, so an `NSVisualEffectView` configured perfectly correctly renders
+  as a flat opaque panel — every property reads right in the debugger and only the pixels are wrong.
+  `.statusBar` is both correct semantically and below that threshold.
+- **Round an `NSVisualEffectView` with `maskImage`, never `masksToBounds`.** Behind-window blur is
+  composited outside the layer tree; a layer mask clips the view and silently discards the material.
+
+On macOS 26 the backdrop is `NSGlassEffectView` (`.regular`) — the system glass widgets and menus
+use, and nothing in the legacy material list resembles it. Below 26 it falls back to
+`NSVisualEffectView`/`.popover`. **The fallback path can't be seen on a 26 machine; check it on an
+older Mac before tagging.**
+
 ## Known constraint: notifications
 
 macOS refuses notification registration for ad-hoc signed bundles — `requestAuthorization` returns
@@ -151,15 +282,20 @@ cache is untouched — and note that `NSTemporaryDirectory()` is the per-user fo
   It should be refetched into a valid day, not reported as an error.
 - **No credentials** — Settings opens by itself at launch.
 
-Reading the menu without screenshots:
+**Reading the UI without screenshots no longer works.** The v0.1 recipe below queried the status
+item's attached menu — but the status item has no menu attached except during a right click (see
+`StatusItemController.showMenu`), so `menu bar item 1` isn't there to query, and an accessory app's
+panel doesn't appear in System Events' window list either.
 
 ```bash
+# v0.1 only. Returns "Can't get menu bar 0 of process Vantage" against v0.2.
 osascript -e 'tell application "System Events" to tell process "Vantage" \
   to get name of every menu item of menu 1 of menu bar item 1 of menu bar (count of menu bars)'
 ```
 
-`(count of menu bars)` matters: once the app is frontmost it has two, and the status item is the
-last one, not the first.
+So panel changes are verified by eye. Build, open, look — in both light and dark. What *is* still
+automatable is everything in `VantageCore`, which is why the Overview's arithmetic lives there
+rather than in the view that displays it.
 
 ## Releasing
 
