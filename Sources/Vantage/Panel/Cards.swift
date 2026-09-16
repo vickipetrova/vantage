@@ -138,48 +138,6 @@ struct AppIconView: View {
     }
 }
 
-// MARK: - Range
-
-/// Which slice of the cache everything above the chart refers to.
-///
-/// A segmented control rather than a menu: three options that are read constantly and switched
-/// often want to be one click, not two, and showing all three at once is what makes the current
-/// one legible at a glance.
-struct RangePicker: View {
-    @ObservedObject var model: PanelModel
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(OverviewRange.allCases, id: \.self) { range in
-                let isSelected = model.range == range
-                Button {
-                    model.select(range)
-                } label: {
-                    Text(range.shortLabel)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                        .foregroundColor(isSelected ? .primary : .secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(Color.primary.opacity(isSelected ? 0.10 : 0))
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(range.label)
-                .accessibilityLabel(range.label)
-                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-            }
-        }
-        .padding(2)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.primary.opacity(0.05))
-        )
-    }
-}
-
 // MARK: - Headline
 
 struct HeadlineCard: View {
@@ -276,15 +234,13 @@ struct TrendCard: View {
     /// `nil` charts the whole portfolio; an Apple ID charts one app.
     var appleID: String?
 
-    /// Thirty days, matching the backfill window — the chart can't show more than is cached, and
-    /// asking for more would draw a run of gaps that says nothing.
-    private static let days = 30
-
+    /// The selected window plus the period before it, ending where the selection ends — see
+    /// `TimeWindow.chart`.
     private var trend: TrendData {
-        Trend.series(days: model.days, series: model.trendSeries, length: Self.days,
-                     endingAt: model.days.first?.date ?? ReportDate.yesterday(),
-                     rates: model.rates, displayCurrency: Prefs.displayCurrency,
-                     appleID: appleID)
+        let chart = model.window.chart(newest: model.newestDay)
+        return Trend.series(days: model.days, series: model.trendSeries, length: chart.length,
+                            endingAt: chart.end, rates: model.rates,
+                            displayCurrency: Prefs.displayCurrency, appleID: appleID)
     }
 
     var body: some View {
@@ -304,7 +260,12 @@ struct TrendCard: View {
             } else if !trend.hasData {
                 Footnote(text: "No days cached yet.").frame(height: 40)
             } else {
-                TrendChart(data: trend, highlightLast: model.range.days)
+                TrendChart(data: trend, highlightLast: model.window.length)
+                    // Drag or swipe sideways to move through time. The surface only reports whole
+                    // days; which days those are is `TimeWindow`'s decision.
+                    .overlay(ChartPanSurface(pointCount: trend.points.count) { days in
+                        model.pan(byDays: days)
+                    })
                 HStack {
                     Text(Fmt.reportDate(trend.points.first?.date ?? ReportDate.yesterday()))
                     Spacer(minLength: 0)

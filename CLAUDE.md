@@ -51,6 +51,7 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/Money.swift` | Per-currency proceeds → one printable figure, honestly |
 | `Sources/VantageCore/OverviewModel.swift` | Everything the Overview section shows, per range |
 | `Sources/VantageCore/Trend.swift` | Chart series: gaps, normalization, negatives |
+| `Sources/VantageCore/TimeWindow.swift` | Which days the panel shows — stepping, panning, custom ranges, clamping |
 | `Sources/VantageCore/AppDetailModel.swift` | One app's slice, narrowed then handed to `OverviewModel` |
 | `Sources/VantageCore/ReplyDraft.swift` | Where confirm-before-send is enforced, as a state machine |
 | `Sources/VantageCore/ASCReviewsWriter.swift` | The only type that can publish a reply |
@@ -72,6 +73,8 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/Vantage/Panel/PanelModel.swift` | What the panel renders; the views read only this |
 | `Sources/Vantage/Panel/OverviewView.swift` | The Overview section |
 | `Sources/Vantage/Panel/TrendChart.swift` | The chart, drawn with `Path` |
+| `Sources/Vantage/Panel/TimeControls.swift` | 1D/7D/30D/Custom, the ‹ date › stepper, the inline custom range |
+| `Sources/Vantage/Panel/ChartPanSurface.swift` | Drag and two-finger swipe on the chart, as whole days |
 | `Sources/Vantage/Panel/ReviewsView.swift` | Reviews, portfolio-wide or per app |
 | `Sources/Vantage/Panel/ReplyComposer.swift` | The composer and the confirmation sheet |
 | `Sources/Vantage/SettingsWindow.swift` | Credentials and preferences, programmatic AppKit |
@@ -272,6 +275,13 @@ app can't hold first responder for typing without `NSApp.activate(ignoringOtherA
 Vantage frontmost just to read a number — unacceptable, and fatal for the review reply composer
 planned in v0.2. `.nonactivatingPanel` plus `canBecomeKey` takes keyboard without activating. The
 cost is that anchoring, click-outside dismissal and Esc are hand-written in `PanelController`.
+
+**Moving through time.** The panel holds the whole cache in memory and one `TimeWindow`, shared
+by Overview and App detail. Opening the panel resets it to Latest (`PanelModel.resetTime`); the
+preset is remembered, the position isn't. Custom dates are an inline row, **not a popover** — a
+popover is its own window, and the click-outside monitor would close the panel on the first click
+into a date field. Chart panning is an AppKit overlay because SwiftUI on macOS 13 can't read a
+horizontal scroll.
 
 Two things there that were found the hard way:
 

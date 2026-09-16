@@ -69,6 +69,21 @@ public struct ReportDate: Hashable, Comparable, Codable, CustomStringConvertible
         Self.calendar.dateComponents([.day], from: startOfDay, to: other.startOfDay).day ?? 0
     }
 
+    /// The date a date picker shows, read as a report day.
+    ///
+    /// By components, never by instant: a picker's value is local midnight, which is the previous
+    /// Pacific day for most of the world. The calendar is a parameter so that's testable.
+    public init(calendarDate: Date, calendar: Calendar = .current) {
+        let parts = calendar.dateComponents([.year, .month, .day], from: calendarDate)
+        self.init(year: parts.year ?? 1970, month: parts.month ?? 1, day: parts.day ?? 1)
+    }
+
+    /// This report day as a date a date picker can show — noon in `calendar`, clear of any
+    /// daylight-saving hour.
+    public func calendarDate(in calendar: Calendar = .current) -> Date {
+        calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12)) ?? startOfDay
+    }
+
     /// Whether this is a real calendar day. `init(apiString:)` accepts 2026-02-30, because it
     /// only ever reads names Vantage wrote itself; input typed by a person or an agent needs this.
     public var isValidCalendarDay: Bool {

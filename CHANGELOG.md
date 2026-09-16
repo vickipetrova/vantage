@@ -8,6 +8,11 @@ All notable changes to Vantage are documented here. The format follows
 
 ### Added
 
+- **Move through time in the panel.** 1D, 7D and 30D gain Custom, with start and end dates, and a
+  `‹ date ›` stepper moves back a whole period at a time. Drag the chart or swipe sideways with two
+  fingers to pan a day at a time; the figures follow. Overview and App detail share the position,
+  and the panel returns to Latest each time it opens. The chart shows the selection plus the
+  period it's compared against.
 - **The CLI and MCP take any range.** `--range 90d`, `--days N`, `--range all` and `--from`/`--to`
   (`days`, `from`, `to` over MCP), over everything cached rather than a fixed 60 days. An
   unrecognised range is refused with a reason instead of silently meaning 30 days, and

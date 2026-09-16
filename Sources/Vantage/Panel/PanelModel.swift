@@ -37,8 +37,19 @@ final class PanelModel: ObservableObject {
     @Published private(set) var metrics: Set<Metric> = Prefs.metrics
     /// Which single series the Overview chart draws. Also mirrored from `Prefs`.
     @Published private(set) var trendSeries: TrendSeries = Prefs.trendSeries
-    /// How much of the cache the Overview summarises.
-    @Published private(set) var range: OverviewRange = Prefs.overviewRange
+    /// Which days the Overview and app detail show.
+    ///
+    /// One position for both, so clicking into an app while looking at March stays in March.
+    /// The preset is remembered across launches; the position isn't — see `resetTime`.
+    @Published private(set) var window = TimeWindow(preset: Prefs.overviewRange)
+    /// Whether the custom start/end row is open. Here rather than in a view, because the Custom
+    /// segment and the date label both open it.
+    @Published var isEditingRange = false
+
+    var newestDay: ReportDate { days.first?.date ?? ReportDate.yesterday() }
+    var oldestDay: ReportDate { days.last?.date ?? newestDay }
+    /// What the headline card and app rows total.
+    var span: OverviewModel.Span { window.span(newest: newestDay) }
 
     // MARK: - Refresh state
 
@@ -87,9 +98,39 @@ final class PanelModel: ObservableObject {
     }
 
     func select(_ range: OverviewRange) {
-        guard range != self.range else { return }
         Prefs.overviewRange = range
-        self.range = range
+        isEditingRange = false
+        // Re-clamped: a 30-day window can't end where a 1-day one did if that would start before
+        // the oldest cached day.
+        window = window.selecting(range).shifted(byDays: 0, oldest: oldestDay, newest: newestDay)
+    }
+
+    func selectCustom(from: ReportDate, to: ReportDate) {
+        isEditingRange = false
+        window = TimeWindow.custom(from: from, to: to, newest: newestDay)
+    }
+
+    /// ‹ and ›.
+    func step(_ periods: Int) {
+        window = window.stepped(by: periods, oldest: oldestDay, newest: newestDay)
+    }
+
+    /// Dragging or swiping the chart. Negative is back in time.
+    func pan(byDays days: Int) {
+        let next = window.shifted(byDays: days, oldest: oldestDay, newest: newestDay)
+        if next != window { window = next }
+    }
+
+    func returnToLatest() {
+        window = window.latest
+    }
+
+    /// Called when the panel opens. A glance at the menu bar is a glance at *now*: opening it to
+    /// last March because that's where it was left would answer a question nobody just asked. A
+    /// custom range falls back to the remembered preset for the same reason.
+    func resetTime() {
+        isEditingRange = false
+        window = TimeWindow(preset: Prefs.overviewRange)
     }
 
     func select(_ series: TrendSeries) {
