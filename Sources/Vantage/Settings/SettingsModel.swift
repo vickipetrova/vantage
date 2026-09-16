@@ -91,6 +91,18 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    /// Whether credentials stay in memory for the life of the process.
+    ///
+    /// Switching it off drops what is already held rather than only stopping future reads from
+    /// being kept — a privacy setting that waits for the next launch isn't one.
+    @Published var rememberCredentials = Prefs.rememberCredentials {
+        didSet {
+            guard rememberCredentials != oldValue else { return }
+            Prefs.rememberCredentials = rememberCredentials
+            if !rememberCredentials { KeychainStore.forgetCachedCredentials() }
+        }
+    }
+
     @Published var launchAtLogin = LaunchAtLogin.isEnabled
 
     // MARK: - Manual rates
@@ -163,6 +175,7 @@ final class SettingsModel: ObservableObject {
         displayCurrency = Prefs.displayCurrency
         morningNotification = Prefs.morningNotification
         repliesEnabled = Prefs.repliesEnabled
+        rememberCredentials = Prefs.rememberCredentials
         launchAtLogin = LaunchAtLogin.isEnabled
         loadRates()
         refreshStates()

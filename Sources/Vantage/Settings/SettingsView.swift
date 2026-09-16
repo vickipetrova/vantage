@@ -83,6 +83,29 @@ private struct ConnectionTab: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            // Belongs here rather than in General: it is a question about the credentials above,
+            // and this is the pane that opens by itself on first launch, so it's the closest thing
+            // to an onboarding step until the first-run walkthrough in CLAUDE.md exists.
+            Section {
+                Toggle("Stay unlocked while Vantage is running", isOn: $model.rememberCredentials)
+            } header: {
+                Text("Keychain")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("On, macOS asks for your password once per launch and Vantage keeps the "
+                         + "credentials in memory until you quit. Off, every request reads the "
+                         + "Keychain again, so a key never outlives the request that used it — "
+                         + "more private, and more prompts.")
+                    Text("Either way your credentials live in one Keychain item, so it is one "
+                         + "prompt rather than one per value. Choosing Always Allow stops the "
+                         + "prompts entirely — though not for a build from source, whose signature "
+                         + "changes every time it is rebuilt.")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .formStyle(.grouped)
     }

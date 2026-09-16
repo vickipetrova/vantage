@@ -9,7 +9,7 @@ story of what happens to it, so you can check the claims against the source.
 An App Store Connect API key's power comes from the **role** you give it when you create it, not
 from the app that holds it.
 
-Vantage can hold **two keys, stored separately**, and neither is ever used for the other's work:
+Vantage can hold **two keys**, and neither is ever used for the other's work:
 
 | Key | Required? | Role | What it's for |
 |---|---|---|---|
@@ -31,7 +31,12 @@ with the Sales and Reports role and give Vantage that one.
 Apple gates customer reviews behind a different role than sales reports, and no single role covers
 both without being far more powerful than either needs. Giving the sales key a bigger role so that
 one extra feature works would widen what a leaked key could do with your account — so Vantage asks
-for a second key instead, and stores it as its own Keychain items.
+for a second key instead.
+
+The two keys are kept apart by *type and wiring* rather than by storage: `credentials()` and
+`reviewsKey()` return different types built from disjoint fields, and each client is constructed
+with a closure that reads only its own. Until recently they also lived in separate Keychain items,
+and this document said so — that is no longer true, and the reason is below.
 
 **The reviews key is optional.** Leave it blank and Vantage does exactly what v0.1 did; the Reviews
 section says so and offers nothing else. Removing it later (**Settings › Remove reviews key**)
@@ -68,6 +73,28 @@ Key ID and its own `.p8`. There is no vendor number for reviews — those endpoi
 All of them go into the **macOS Keychain**, under the service `com.vickipetrova.vantage`, through
 `Security.framework` in-process (`SecItemAdd` / `SecItemCopyMatching`) — not by shelling out to
 `/usr/bin/security`, so no credential ever crosses a pipe or lands in a subprocess's output.
+
+### One item, and what that costs
+
+They are stored as **one Keychain item**, holding a small JSON object, rather than one item per
+value.
+
+A Keychain ACL is granted **per item**. macOS asks once per item, and "Always Allow" adds the app to
+that one item's trusted list and no other. Seven items therefore meant seven password prompts at
+every launch, and answering all seven only ever answered the seven it had asked about. One item is
+one question.
+
+The honest cost: **the two keys are no longer separated in storage.** A read returns the whole
+vault, so the reviews key sits in the same item as the sales key and any code reading one has the
+other in hand. What protects them from each other now is type and wiring, not the Keychain — see
+above. If you are auditing this on the assumption that the sales key and reviews key are
+independently stored, that assumption no longer holds.
+
+Upgrading migrates the seven old items into one. That launch still asks seven times, because there
+is no way to read seven items with fewer than seven authorisations. An old item is deleted only
+after the new one has been written *and* read back identical, and only if that specific value was
+successfully read — a prompt you dismiss leaves its item untouched for a later launch rather than
+being deleted on the strength of a value Vantage never saw.
 
 The `.p8` file you picked is read once, at the moment you choose it, and is not copied anywhere.
 Vantage does not keep the file path, does not re-read the file later, and does not need the file to
@@ -156,6 +183,18 @@ whose token is scoped is answered `405 METHOD_NOT_ALLOWED`; a verbless entry or 
 Vantage can make — creating an analytics report request, and publishing a review reply — are
 limited by the `aud` claim and the five-minute lifetime rather than by scope. Tokens are held in
 memory for the request and dropped — never written to disk.
+
+**Credentials themselves are held in memory by default, and you can turn that off.**
+*Settings › App Store Connect › Keychain* controls it:
+
+- **On** (default) — the vault is read once per launch and kept until you quit. One password prompt
+  per launch at most.
+- **Off** — every request reads the Keychain again, so a key never outlives the request that used
+  it. This is what Vantage did unconditionally before the setting existed. More private, more
+  prompts.
+
+Switching it off drops what is already held immediately rather than at the next launch. Either way
+nothing is written to disk, and nothing is logged.
 
 Three currencies Apple pays in — **AED, SAR and QAR** — are converted from a **hard-coded peg**
 rather than a fetched rate, because their central banks fix them against the US dollar and the ECB

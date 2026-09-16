@@ -17,6 +17,7 @@ public enum Prefs {
         static let lastRefreshSuccess = "lastRefreshSuccess"
         static let manualRates = "manualRates"
         static let manualRateDates = "manualRateDates"
+        static let rememberCredentials = "rememberCredentials"
     }
 
     /// What the menu bar renders money in. Defaults to the currency of the user's region, which is
@@ -106,6 +107,28 @@ public enum Prefs {
     public static var repliesEnabled: Bool {
         get { defaults.bool(forKey: Key.repliesEnabled) }
         set { defaults.set(newValue, forKey: Key.repliesEnabled) }
+    }
+
+    /// Whether the credentials read at launch are kept in memory for the life of the process.
+    ///
+    /// **On by default**, because the alternative is answering the Keychain every time: the sales
+    /// client asks for credentials per request, so a thirty-day backfill reads the item thirty
+    /// times. macOS only prompts when its ACL grant doesn't cover the app — but a build-from-source
+    /// bundle is ad-hoc signed, its designated requirement is the hash of the binary, and every
+    /// rebuild therefore invalidates every "Always Allow". That is exactly when re-reading turns
+    /// into a wall of password prompts.
+    ///
+    /// **Off is a real choice, not a token one.** With this off, credentials are read on demand,
+    /// handed to one request and dropped, so a key never outlives the request that used it. That
+    /// was the behaviour Vantage promised unconditionally before this existed, and for someone who
+    /// would rather type a password than have a private key sit in a running process's memory, it
+    /// is the right answer. `SECURITY.md` describes both.
+    public static var rememberCredentials: Bool {
+        get {
+            guard defaults.object(forKey: Key.rememberCredentials) != nil else { return true }
+            return defaults.bool(forKey: Key.rememberCredentials)
+        }
+        set { defaults.set(newValue, forKey: Key.rememberCredentials) }
     }
 
     /// When Vantage last got something out of App Store Connect.
