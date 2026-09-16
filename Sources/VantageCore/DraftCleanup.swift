@@ -82,11 +82,21 @@ public enum DraftCleanup {
     static func stripPlaceholderSignOff(_ text: String) -> String {
         var lines = text.components(separatedBy: "\n")
         dropTrailingBlankLines(&lines)
-        guard let last = lines.last, containsPlaceholder(last) else { return text }
+        guard let last = lines.last, isPlaceholderSignOff(last) else { return text }
         lines.removeLast()
         dropTrailingBlankLines(&lines)
         if let closing = lines.last, isClosing(closing) { lines.removeLast() }
         return lines.joined(separator: "\n")
+    }
+
+    /// Whether a line is a placeholder sign-off (only a placeholder, or placeholder with closing word).
+    /// After removing all placeholders and trimming punctuation/whitespace, nothing substantive remains.
+    static func isPlaceholderSignOff(_ line: String) -> Bool {
+        let withoutPlaceholders = line.replacingOccurrences(of: #"\[[^\[\]\n]{1,40}\]"#, with: "", options: .regularExpression)
+        let word = folded(withoutPlaceholders)
+            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ",.!-—"))
+        return word.isEmpty || closings.contains(word)
     }
 
     private static func dropTrailingBlankLines(_ lines: inout [String]) {

@@ -58,6 +58,16 @@ final class DraftCleanupTests: XCTestCase {
         XCTAssertEqual(cleaned("Thanks for the kind words!\nBest regards, [Developer Name]"), "Thanks for the kind words!")
     }
 
+    /// A placeholder inside a real last sentence isn't a sign-off. Removing the line would delete
+    /// content without a trace; rejecting lets Try again produce a usable draft.
+    func testAPlaceholderInARealLastLineRejectsRatherThanDeletes() {
+        XCTAssertEqual(error("We're glad you like it!\nLet us know about [feature] soon."), .rejected)
+    }
+
+    func testAPlaceholderOnlyLastLineIsStillRemoved() {
+        XCTAssertEqual(cleaned("Thanks for the kind words!\n[Your Name]"), "Thanks for the kind words!")
+    }
+
     func testWindowsLineEndingsDoNotHideASignOff() {
         XCTAssertEqual(cleaned("Thanks for the kind words!\r\n\r\nBest,\r\n[Your Name]"), "Thanks for the kind words!")
     }
