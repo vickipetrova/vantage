@@ -22,7 +22,9 @@ struct SettingsView: View {
         }
         // A modest minimum, not the natural height: a grouped Form scrolls on its own, so the
         // window can be shrunk to fit a small display without any control becoming unreachable.
-        .frame(minWidth: 500, minHeight: 380)
+        // The width is not modest: below it the credential rows' fixed columns no longer fit beside
+        // "Vendor Number", and the field drops onto a line of its own.
+        .frame(minWidth: 580, minHeight: 380)
     }
 }
 
@@ -35,18 +37,12 @@ private struct ConnectionTab: View {
         Form {
             Section {
                 CredentialField(title: "Issuer ID", text: $model.issuerID,
-                                placeholder: "00000000-0000-0000-0000-000000000000",
+                                placeholder: "UUID",
                                 state: model.state(.issuerID))
                 CredentialField(title: "Key ID", text: $model.keyID,
                                 placeholder: "10 characters",
                                 state: model.state(.keyID))
-                LabeledContent("Private key") {
-                    HStack(spacing: 8) {
-                        Button("Choose .p8…") { model.choosePrivateKey() }
-                        StateBadge(state: model.state(.privateKey))
-                        Spacer(minLength: 0)
-                    }
-                }
+                KeyFileRow(state: model.state(.privateKey)) { model.choosePrivateKey() }
                 CredentialField(title: "Vendor Number", text: $model.vendorNumber,
                                 placeholder: "8-digit number",
                                 state: model.state(.vendorNumber))
@@ -125,12 +121,8 @@ private struct ReviewsTab: View {
                 CredentialField(title: "Key ID", text: $model.reviewsKeyID,
                                 placeholder: "10 characters",
                                 state: model.state(.reviewsKeyID))
-                LabeledContent("Private key") {
-                    HStack(spacing: 8) {
-                        Button("Choose .p8…") { model.chooseReviewsPrivateKey() }
-                        StateBadge(state: model.state(.reviewsPrivateKey))
-                        Spacer(minLength: 0)
-                    }
+                KeyFileRow(state: model.state(.reviewsPrivateKey)) {
+                    model.chooseReviewsPrivateKey()
                 }
                 HStack(spacing: 8) {
                     Button("Save reviews key") { model.saveReviewsKey() }
@@ -189,6 +181,8 @@ private struct GeneralTab: View {
                 Picker("Display currency", selection: $model.displayCurrency) {
                     ForEach(Prefs.selectableCurrencies, id: \.self) { Text($0).tag($0) }
                 }
+            } header: {
+                Text("Currency")
             } footer: {
                 Text("Proceeds are converted at the European Central Bank's daily rates and marked "
                      + "≈. Currencies the ECB doesn't publish are listed separately rather than "
@@ -289,39 +283,72 @@ private struct DataSection: View {
 }
 
 /// A rate the user supplies for a currency nothing publishes one for.
+///
+/// Whose number it is goes under the code, as the row's subtitle, so the controls on the right keep
+/// one width and line up down the section whatever the note says.
 private struct ManualRateRow: View {
     @ObservedObject var model: SettingsModel
     let row: SettingsModel.RateRow
 
     var body: some View {
-        LabeledContent(row.code) {
+        LabeledContent {
             HStack(spacing: 8) {
-                TextField("per US dollar", text: Binding(
+                // Title empty and the hint as a prompt: in a grouped form a text field's title is
+                // drawn as a label beside it, which is what used to wrap "per US dollar" onto two
+                // lines and push every field to a different x.
+                TextField("", text: Binding(
                     get: { row.text },
-                    set: { model.updateRate(row.code, text: $0) }))
+                    set: { model.updateRate(row.code, text: $0) }),
+                    prompt: Text("Rate"))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 110)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .frame(width: SettingsColumn.rate)
                     // Committed on Return and on losing focus, so a typed rate can't sit
                     // uncommitted while the panel shows the old figure.
                     .onSubmit { model.commitRate(row.code) }
+                Text("per USD")
+                    .foregroundColor(.secondary)
+                    .fixedSize()
                 Button("Set") { model.commitRate(row.code) }
-                    .controlSize(.small)
-                if let setAt = row.setAt {
-                    // A hand-typed rate for a floating currency drifts silently. The date is the
-                    // only thing that makes that visible.
-                    Text("set \(Fmt.relative(setAt))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else if row.isEstimate {
-                    Text("Vantage's estimate")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                } else {
-                    Text("not set")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer(minLength: 0)
+            }
+        } label: {
+            Text(row.code)
+            // A hand-typed rate for a floating currency drifts silently. The date is the only thing
+            // that makes that visible.
+            if let setAt = row.setAt {
+                Text("Set \(Fmt.relative(setAt))")
+            } else if row.isEstimate {
+                Text("Vantage's estimate").foregroundColor(.orange)
+            } else {
+                Text("Not set")
+            }
+        }
+    }
+}
+
+/// Fixed widths for the right-hand controls, so fields, buttons and badges line up from row to row
+/// and from tab to tab instead of each row sizing itself.
+private enum SettingsColumn {
+    /// Wide enough for a whole Issuer ID — a UUID cut off at the end can't be checked by eye.
+    static let field: CGFloat = 280
+    static let badge: CGFloat = 80
+    static let rate: CGFloat = 90
+}
+
+/// The `.p8` row, laid out on the same columns as the text fields above and below it.
+private struct KeyFileRow: View {
+    let state: SettingsModel.FieldState
+    let choose: () -> Void
+
+    var body: some View {
+        LabeledContent("Private key") {
+            HStack(spacing: 8) {
+                Button("Choose .p8…", action: choose)
+                    .frame(width: SettingsColumn.field, alignment: .leading)
+                StateBadge(state: state)
+                    .frame(width: SettingsColumn.badge, alignment: .leading)
             }
         }
     }
@@ -337,10 +364,17 @@ private struct CredentialField: View {
     var body: some View {
         LabeledContent(title) {
             HStack(spacing: 8) {
-                TextField(placeholder, text: $text)
+                // Hint as a prompt, not a title — a title is drawn beside the field in a grouped
+                // form, and a long one wrapped and shoved the field onto its own line.
+                TextField("", text: $text, prompt: Text(placeholder))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 180)
+                    // A grouped form right-aligns fields by default; an identifier reads, and is
+                    // compared against App Store Connect, from its start.
+                    .multilineTextAlignment(.leading)
+                    .frame(width: SettingsColumn.field)
                 StateBadge(state: state)
+                    .frame(width: SettingsColumn.badge, alignment: .leading)
             }
         }
     }
