@@ -111,8 +111,10 @@ public struct ASCReviewsWriter: ReviewsWriter {
     private static func request(method: String, path: String, key: ASCKey?) -> URLRequest? {
         guard let key,
               let url = URL(string: "https://\(host)\(path)"),
-              // Scope carries the method, so a token minted for this POST cannot be replayed as
-              // anything else — including a DELETE of the same resource.
+              // No scope claim reaches the wire for a write, and that is Apple's rule rather than
+              // a choice: a scoped POST is answered 405 METHOD_NOT_ALLOWED. `ASCToken.mint` sets
+              // scope on GET only — see the note there. A write token is narrowed by `aud` and the
+              // five-minute lifetime instead.
               let token = try? ASCToken.mint(key: key, method: method, path: path)
         else { return nil }
 

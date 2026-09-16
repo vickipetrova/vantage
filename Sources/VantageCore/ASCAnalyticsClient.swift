@@ -3,7 +3,10 @@ import Foundation
 
 /// A source of App Store engagement figures.
 public protocol AnalyticsProvider {
-    func engagement(forApp appleID: String,
+    /// - Parameter instances: how many of the newest daily instances to pull. The caller works this
+    ///   out from what it already has — see `AnalyticsStore.instancesNeeded` — so that an absence
+    ///   longer than a week repairs itself instead of leaving a permanent hole.
+    func engagement(forApp appleID: String, instances: Int,
                     completion: @escaping (Result<[EngagementDay], Error>) -> Void)
 }
 
@@ -20,12 +23,13 @@ public protocol AnalyticsProvider {
 public struct ASCAnalyticsClient: AnalyticsProvider {
     private static let host = "api.appstoreconnect.apple.com"
 
-    /// How many of the newest daily instances to pull per refresh.
+    /// The fallback when a caller doesn't say how many instances it needs.
     ///
     /// Each instance is a separate segments call plus one download per segment, so this is the main
-    /// lever on how much of the hourly budget analytics costs. History accumulates in
-    /// `AnalyticsStore` between refreshes, so a small number here still builds a long chart.
-    static let instanceLimit = 7
+    /// lever on how much of the hourly budget analytics costs. It is **not** a ceiling any more:
+    /// `AnalyticsStore.instancesNeeded` sizes each refresh to the gap since the last one, because a
+    /// fixed cap here silently abandoned every day older than the cap. See that method.
+    public static let defaultInstances = AnalyticsStore.openingInstances
 
     /// The report Vantage reads. Apple ships a Standard and a Detailed variant; Standard omits the
     /// fields that carry uniquely identifiable data, and impressions and page views are in both.
@@ -61,7 +65,7 @@ public struct ASCAnalyticsClient: AnalyticsProvider {
 
     // MARK: - Entry point
 
-    public func engagement(forApp appleID: String,
+    public func engagement(forApp appleID: String, instances: Int = defaultInstances,
                            completion: @escaping (Result<[EngagementDay], Error>) -> Void) {
         guard keyProvider() != nil else {
             completion(.failure(AnalyticsError.noKey))
@@ -79,24 +83,57 @@ public struct ASCAnalyticsClient: AnalyticsProvider {
             case .failure(let error):
                 completion(.failure(error))
             case .success(let data):
-                let existing = AnalyticsDecoder.requests(from: data)
-                    .filter { $0.accessType == "ONGOING" && !$0.stoppedDueToInactivity }
-                if let request = existing.first {
-                    self.reports(for: request.id, completion: completion)
-                } else {
-                    self.createRequest(appleID: appleID) { result in
+                switch AnalyticsRequestDecision.decide(from: AnalyticsDecoder.requests(from: data)) {
+                case .use(let id):
+                    self.reports(for: id, instances: instances, completion: completion)
+
+                case .create:
+                    self.start(appleID: appleID, answering: .notReadyYet, completion: completion)
+
+                case .restart(let dead):
+                    // Apple stops generating for a request nobody reads, and will not restart one:
+                    // POSTing over it is answered `409 STATE_ERROR`. The dead request has to go
+                    // first. Nothing already downloaded is at risk — `AnalyticsStore` keeps its own
+                    // copy, which is the whole reason it merges rather than mirrors.
+                    self.delete(requestID: dead) { result in
                         switch result {
-                        case .failure(let error): completion(.failure(error))
-                        case .success(let request):
-                            // A brand-new request has nothing behind it for a day or two. Saying so
-                            // is the whole difference between "working" and "broken".
-                            _ = request
-                            completion(.failure(AnalyticsError.notReadyYet))
+                        case .failure(let error):
+                            completion(.failure(error))
+                        case .success:
+                            self.start(appleID: appleID, answering: .restartedAfterInactivity,
+                                       completion: completion)
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Creates a request and reports the wait that follows, which is the only honest answer: a
+    /// brand-new request has nothing behind it for 24–48 hours. Saying so is the whole difference
+    /// between "working" and "broken".
+    private func start(appleID: String, answering wait: AnalyticsError,
+                       completion: @escaping (Result<[EngagementDay], Error>) -> Void) {
+        createRequest(appleID: appleID) { result in
+            switch result {
+            case .failure(let error): completion(.failure(error))
+            case .success: completion(.failure(wait))
+            }
+        }
+    }
+
+    /// Deletes a report request. Apple lists `CREATE, DELETE, GET_INSTANCE` as this resource's
+    /// operations, and 204 is the documented success.
+    private func delete(requestID: String,
+                        completion: @escaping (Result<Void, Error>) -> Void) {
+        guard AnalyticsDecoder.isWellFormedRequestID(requestID),
+              let request = signedRequest(method: "DELETE",
+                                          path: "/v1/analyticsReportRequests/\(requestID)")
+        else {
+            completion(.failure(AnalyticsError.badResponse))
+            return
+        }
+        Self.send(request, expecting: 204) { completion($0.map { _ in () }) }
     }
 
     // MARK: - Step 2: create
@@ -133,7 +170,7 @@ public struct ASCAnalyticsClient: AnalyticsProvider {
 
     // MARK: - Step 3: the report
 
-    private func reports(for requestID: String,
+    private func reports(for requestID: String, instances: Int,
                          completion: @escaping (Result<[EngagementDay], Error>) -> Void) {
         get("/v1/analyticsReportRequests/\(requestID)/reports"
             + "?filter[category]=APP_STORE_ENGAGEMENT&limit=200") { result in
@@ -151,14 +188,14 @@ public struct ASCAnalyticsClient: AnalyticsProvider {
                     completion(.failure(AnalyticsError.notReadyYet))
                     return
                 }
-                self.instances(for: report.id, completion: completion)
+                self.instances(for: report.id, limit: instances, completion: completion)
             }
         }
     }
 
     // MARK: - Step 4: instances, then segments
 
-    private func instances(for reportID: String,
+    private func instances(for reportID: String, limit: Int,
                            completion: @escaping (Result<[EngagementDay], Error>) -> Void) {
         get("/v1/analyticsReports/\(reportID)/instances"
             + "?filter[granularity]=DAILY&limit=200") { result in
@@ -168,7 +205,7 @@ public struct ASCAnalyticsClient: AnalyticsProvider {
             case .success(let data):
                 let instances = AnalyticsDecoder.instances(from: data)
                     .sorted { $0.processingDate > $1.processingDate }
-                    .prefix(Self.instanceLimit)
+                    .prefix(max(1, limit))
                 guard !instances.isEmpty else {
                     completion(.failure(AnalyticsError.notReadyYet))
                     return

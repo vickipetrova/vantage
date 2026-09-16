@@ -35,9 +35,28 @@ type, and you filter later:
 which is why `ASCAnalyticsClient` checks for an existing request before trying to create one, and
 why a 403 here gets its own error rather than the generic one.
 
+**The token for this POST must carry no `scope` claim.** Verified against the live API on
+2026-09-16: a scoped write is answered `405 METHOD_NOT_ALLOWED` — the status for a bad path, which
+is why this reads as a wrong endpoint and isn't one. Apple's scope claim accepts `GET` entries only.
+`ASCToken.mint` therefore sets scope on GET and omits it otherwise; see the table in its doc comment
+and `ASCTokenTests.testWriteTokensCarryNoScopeBecauseAppleRefusesThem`.
+
+This shipped wrong and cost a month of analytics. The create POST 405'd on every single refresh, so
+no report request ever existed; the client then returned `notReadyYet` and the panel rendered
+"Apple is preparing your first report — this is not an error", indefinitely.
+
 **The first report arrives 24–48 hours after the request.** That is not a failure and the UI must
-not present it as one. A request nobody reads eventually gets `stoppedDueToInactivity`, which the
-decoder surfaces so a frozen chart can explain itself.
+not present it as one. A request nobody reads eventually gets `stoppedDueToInactivity`.
+
+**A stopped request must be deleted before a new one can be created.** Apple will not restart one,
+and `POST`ing over it is answered `409 STATE_ERROR — You already have such an entity`. The original
+code filtered the stopped request out and fell straight through to create, so it hit that 409 on
+every refresh, mapped it to `notReadyYet`, and the panel said "Apple is preparing your first report"
+with no way back — a second dead end with the same symptom as the scope bug above. The decision now
+lives in `AnalyticsRequestDecision.decide`, where it is tested: `use`, `restart`, or `create`.
+
+Deleting is safe for history. `AnalyticsStore` is Vantage's own archive and is never touched by it;
+that is what merging rather than mirroring buys.
 
 ### 3. Reports
 
@@ -110,9 +129,32 @@ Traps, all with tests:
 ## What this costs
 
 One refresh is, per app: one request list, possibly one create, one report list, one instance list,
-then one segments call and one download **per instance**. `ASCAnalyticsClient.instanceLimit` caps
-that at the newest 7 days; history accumulates in `AnalyticsStore` between refreshes, so a small
-number still builds a long chart.
+then one segments call and one download **per instance**.
 
-Rate limits are the same 3,500-per-hour rolling window as everything else on this API. Analytics is
-fetched only when its section is opened, never from the poll timer.
+How many instances is **not fixed**. `AnalyticsStore.instancesNeeded` sizes each refresh to the gap
+since that app was last fetched: `openingInstances` (7) on a cold cache, otherwise the days missed
+plus `revisionOverlap` (3), capped at `retentionInstances` (35). It was a fixed 7, and that quietly
+meant a fortnight away left days 8–14 missing **forever** — every later refresh asked for the newest
+seven again and nothing went back for the rest, while Apple still held them the whole time. History
+accumulates in `AnalyticsStore` between refreshes, so a short absence still costs nothing.
+
+The overlap is not optional: Apple revises a day as late events land and a day isn't final until two
+days after it, so a refresh that took only genuinely new days would keep the first provisional
+figures forever.
+
+Rate limits are the same 3,500-per-hour rolling window as everything else on this API.
+
+Analytics is fetched on **every refresh** — launch, wake and the poll timer included — and also on
+opening the panel, opening the Analytics section, and Refresh Now.
+
+Background fetching is deliberate, and the reason is retention rather than convenience: Apple keeps
+daily instances for 35 days, so a history nobody collects is *lost*, not merely late. An app sitting
+in the menu bar therefore keeps itself current without anyone opening anything.
+
+What makes that affordable is `AnalyticsStore.maxAge` (6 hours), not restraint about when to ask.
+`Schedule.nextPoll` fires hourly only while chasing a report that's due and otherwise once at the
+next morning window, but the staleness gate is the real limit: **one to four fetches a day however
+often the timer fires**, which suits data that only moves daily. Opening the panel twenty times
+costs nothing extra for the same reason.
+
+Only Refresh Now passes `force` — an explicit click means now, a timer doesn't get to say that.

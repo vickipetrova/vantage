@@ -107,15 +107,49 @@ final class ASCTokenTests: XCTestCase {
         XCTAssertThrowsError(try ASCToken.mint(key: bad, method: "GET", path: "/v1/salesReports"))
     }
 
-    /// The reason the scope claim is worth setting at all: a token minted to read cannot be
-    /// replayed to write. This matters more the moment review responses become possible.
-    func testScopeCarriesTheMethodSoAReadTokenCannotWrite() throws {
+    /// The reason the scope claim is worth setting at all: a token minted to read one path cannot
+    /// be replayed against another. Apple enforces this — a token scoped to
+    /// `GET /v1/analyticsReportRequests` used on a different request comes back
+    /// `403 FORBIDDEN.REQUEST_DOES_NOT_MATCH_SCOPE`.
+    func testScopeCarriesTheMethodAndPathOnReads() throws {
         let read = try decode(mint("/v1/customerReviewResponses").split(separator: ".")[1])
         XCTAssertEqual(read["scope"] as? [String], ["GET /v1/customerReviewResponses"])
+    }
 
+    /// **Apple's `scope` claim only accepts GET entries**, so a write token must carry none.
+    ///
+    /// Verified against the live API on 2026-09-16. A `POST /v1/analyticsReportRequests` is
+    /// answered `405 METHOD_NOT_ALLOWED` — not 401, not 403 — when, and only when, its token
+    /// carries a scope claim naming the verb. The identical request with no scope claim returns
+    /// `201 Created`. Every other form is refused too:
+    ///
+    /// | scope on a POST        | answer                                   |
+    /// |------------------------|------------------------------------------|
+    /// | `["POST /v1/…"]`       | 405 METHOD_NOT_ALLOWED                   |
+    /// | `["/v1/…"]` (no verb)  | 400 ENTITY_INVALID                       |
+    /// | `["GET /v1/…"]`        | 403 FORBIDDEN.REQUEST_DOES_NOT_MATCH_SCOPE |
+    /// | `[]`                   | 400 ENTITY_INVALID                       |
+    /// | omitted                | 201 Created                              |
+    ///
+    /// This cost a month of analytics: the create-report-request POST 405'd on every refresh, and
+    /// the panel read that non-fatal error as "Apple is preparing your first report."
+    func testWriteTokensCarryNoScopeBecauseAppleRefusesThem() throws {
+        for method in ["POST", "PATCH", "DELETE"] {
+            let write = try decode(
+                mint("/v1/customerReviewResponses", method: method).split(separator: ".")[1])
+            XCTAssertNil(write["scope"],
+                         "a \(method) token with a scope claim is answered 405 by Apple")
+        }
+    }
+
+    /// The claims that limit a write token, now that scope can't.
+    func testAWriteTokenIsStillNarrowedByAudienceAndLifetime() throws {
         let write = try decode(
             mint("/v1/customerReviewResponses", method: "POST").split(separator: ".")[1])
-        XCTAssertEqual(write["scope"] as? [String], ["POST /v1/customerReviewResponses"])
+        XCTAssertEqual(write["aud"] as? String, "appstoreconnect-v1")
+        let issued = try XCTUnwrap(write["iat"] as? Int)
+        let expires = try XCTUnwrap(write["exp"] as? Int)
+        XCTAssertEqual(expires - issued, Int(ASCToken.lifetime))
     }
 
     /// Pinned as a literal. The other lifetime test asserts only Apple's 20-minute ceiling and

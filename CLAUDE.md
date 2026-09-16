@@ -57,7 +57,7 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/Analytics.swift` | Analytics models, JSON:API decoding, the S3 host check |
 | `Sources/VantageCore/ASCAnalyticsClient.swift` | The four-step analytics lifecycle |
 | `Sources/VantageCore/SegmentParser.swift` | Gzipped TSV → `EngagementDay` |
-| `Sources/VantageCore/AnalyticsStore.swift` | Merging archive — Apple keeps instances 35 days |
+| `Sources/VantageCore/AnalyticsStore.swift` | Merging archive, and how many instances a refresh needs |
 | `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
 | `Sources/VantageCore/CacheQuery.swift` | Read-only answers about the cache, for the CLI and MCP |
 | `Sources/VantageCore/NoRedirects.swift` | Refuses every redirect, on every host |
@@ -164,7 +164,16 @@ Three things that bite:
 
 - **`processingDate` is not the date the data describes.** The rows carry their own `Date` column.
 - **Instances are kept 35 days.** `AnalyticsStore` merges rather than replaces, so older days exist
-  only in Vantage's copy.
+  only in Vantage's copy. Each refresh asks for as many instances as the gap since the last one
+  needs (`AnalyticsStore.instancesNeeded`), capped at those 35 — a fixed count silently abandons
+  every day older than the cap, which is what a hardcoded 7 did here.
+- **Analytics fetches in the background**, from every `refresh(userInitiated:)` — launch, wake and
+  poll timer included — and from panel-open and Refresh Now. That reverses the original
+  section-open-only rule on purpose: Apple deletes instances after 35 days, so uncollected history
+  is gone rather than late. `AnalyticsStore.maxAge`, not caller restraint, is what caps the cost.
+- **A `stoppedDueToInactivity` request must be deleted, not written over.** Apple answers a `POST`
+  over one with `409`, so the naive "filter it out and create" loops forever on
+  "Apple is preparing your first report". See `AnalyticsRequestDecision`.
 - **Swift treats `\r\n` as one `Character`**, so `split(separator: "\n")` never matches it.
   Normalize line endings first, as `ReportParser` does. `SegmentParser` shipped with this wrong and
   a test caught it.

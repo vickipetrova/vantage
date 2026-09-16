@@ -43,7 +43,20 @@ public enum ASCToken {
     /// `method` and `path` are the method and the exact path-plus-query the token will be used
     /// against, so the `scope` claim matches. Scope is optional in Apple's spec; setting it means a
     /// token that escapes somehow can make one request and nothing else — not, say, read the whole
-    /// account, and (once reviews can be answered) certainly not publish anything.
+    /// account. Apple enforces it: a scoped token used against any other request is answered
+    /// `403 FORBIDDEN.REQUEST_DOES_NOT_MATCH_SCOPE`.
+    ///
+    /// **Scope is set on GET only, because Apple accepts nothing else there.** A write whose token
+    /// carries a scope claim naming its own verb is answered `405 METHOD_NOT_ALLOWED` — the status
+    /// for a bad *path*, which is what made this so expensive to find. Verified against the live
+    /// API on 2026-09-16: `POST /v1/analyticsReportRequests` returns 405 with
+    /// `["POST /v1/analyticsReportRequests"]`, 400 `ENTITY_INVALID` with a verbless entry or an
+    /// empty array, 403 with a `GET` entry — and 201 with no scope claim at all. There is no form
+    /// that works, so a write token carries none and is limited by `aud` and the five-minute
+    /// lifetime instead. See `ASCTokenTests.testWriteTokensCarryNoScopeBecauseAppleRefusesThem`.
+    ///
+    /// This is not a detail: with scope on writes, `ASCAnalyticsClient` could never create a report
+    /// request and analytics never produced a single number.
     public static func mint(key: ASCKey, method: String, path: String,
                             now: Date = Date()) throws -> String {
         let issuedAt = Int(now.timeIntervalSince1970)
@@ -52,13 +65,15 @@ public enum ASCToken {
             "kid": key.keyID,
             "typ": "JWT",
         ]
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "iss": key.issuerID,
             "iat": issuedAt,
             "exp": issuedAt + Int(lifetime),
             "aud": "appstoreconnect-v1",
-            "scope": ["\(method) \(path)"],
         ]
+        if method.uppercased() == "GET" {
+            payload["scope"] = ["\(method) \(path)"]
+        }
 
         let signingInput = try base64URL(json: header) + "." + base64URL(json: payload)
         let signingKey = try P256.Signing.PrivateKey(pemRepresentation: key.privateKey)
