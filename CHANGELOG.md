@@ -8,6 +8,11 @@ All notable changes to Vantage are documented here. The format follows
 
 ### Added
 
+- **An app icon** — a watchtower on a dawn gradient, built with Icon Composer so macOS 26 shows
+  proper Dark, Clear and Tinted variants, with a flat fallback for macOS 13–15.
+- **Menu bar: numbers, icon, or both**, in Settings › General. With the icon alone, loading dims it
+  and a problem still shows as `!` or `⚠︎` beside it.
+
 - **Move through time in the panel.** 1D, 7D and 30D gain Custom, with start and end dates, and a
   `‹ date ›` stepper moves back a whole period at a time. Drag the chart or swipe sideways with two
   fingers to pan a day at a time; the figures follow. Overview and App detail share the position,

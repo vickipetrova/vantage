@@ -98,36 +98,46 @@ final class StatusItemController: NSObject {
 
     // MARK: - Menu bar title
 
-    /// `$142 · 89↓`, or one of the three plain states: `…` loading, `!` error, `–` nothing yet.
+    /// `$142 · 89↓`, the tower, or both — per `Prefs.menuBarStyle`. What each state shows in each
+    /// style is `MenuBarTitle`'s decision; this only applies it to the button.
     private func renderTitle() {
         guard let button = statusItem.button else { return }
 
-        guard let latest = days.first else {
-            button.attributedTitle = NSAttributedString()
-            if !hasCredentials || error != nil { button.title = hasCredentials ? "!" : "–" }
-            else { button.title = "…" }
-            return
+        let state: MenuBarTitle.State
+        var toolTip: String?
+        if let latest = days.first {
+            let units = Metric.units(in: latest, metrics: Prefs.metrics)
+            let figures = money(latest.proceeds, compact: true).headline
+                + " · \(Fmt.downloadsWithArrow(units))"
+            // A marker only when the figures are actually behind what Apple has published — never
+            // for a failed refresh that left nothing missing. Marking the ordinary case would train
+            // people to ignore the marker for the times it means something, and this is the one
+            // surface that is always on screen.
+            let freshness = Freshness.evaluate(newestCached: latest.date,
+                                               lastSuccess: Prefs.lastRefreshSuccess,
+                                               error: error)
+            state = .figures(figures, behind: freshness.marksMenuBar)
+            toolTip = freshness.problem.map { "\(freshness.headline) — \($0)" }
+                ?? freshness.headline
+        } else if !hasCredentials {
+            state = .noCredentials
+        } else if error != nil {
+            state = .failed
+        } else {
+            state = .loading
         }
 
-        let units = Metric.units(in: latest, metrics: Prefs.metrics)
-        let figures = money(latest.proceeds, compact: true).headline
-            + " · \(Fmt.downloadsWithArrow(units))"
-
-        // A marker only when the figures are actually behind what Apple has published — never for a
-        // failed refresh that left nothing missing. Marking the ordinary case would train people to
-        // ignore the marker for the times it means something, and this is the one surface that is
-        // always on screen.
-        let freshness = Freshness.evaluate(newestCached: latest.date,
-                                           lastSuccess: Prefs.lastRefreshSuccess,
-                                           error: error)
-        let text = freshness.marksMenuBar ? "⚠︎ " + figures : figures
-
+        let title = MenuBarTitle.make(state, style: Prefs.menuBarStyle)
+        button.image = title.showsIcon ? TowerGlyph.image : nil
+        button.imagePosition = title.text.isEmpty ? .imageOnly : .imageLeading
+        button.appearsDisabled = title.isDimmed
         // Monospaced digits so the title doesn't shuffle sideways as the numbers tick over.
-        button.attributedTitle = NSAttributedString(string: text, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
-        ])
-        button.toolTip = freshness.problem.map { "\(freshness.headline) — \($0)" }
-            ?? freshness.headline
+        button.attributedTitle = NSAttributedString(
+            // A leading space when beside the icon: `imageLeading` butts the two together.
+            string: title.showsIcon && !title.text.isEmpty ? " " + title.text : title.text,
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)])
+        // With the figures hidden, the tooltip is the quickest way to them.
+        button.toolTip = toolTip
     }
 
     /// Formats proceeds for display, via the rate table currently on hand.

@@ -215,6 +215,9 @@ private struct GeneralTab: View {
             DataSection(model: model)
 
             Section {
+                Picker("Menu bar shows", selection: $model.menuBarStyle) {
+                    ForEach(MenuBarStyle.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
                 Toggle("Notify me when a new report lands", isOn: $model.morningNotification)
                 Toggle("Launch at login", isOn: Binding(
                     get: { model.launchAtLogin },

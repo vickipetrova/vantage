@@ -106,6 +106,14 @@ final class SettingsModel: ObservableObject {
 
     @Published var launchAtLogin = LaunchAtLogin.isEnabled
 
+    @Published var menuBarStyle = Prefs.menuBarStyle {
+        didSet {
+            guard menuBarStyle != oldValue else { return }
+            Prefs.menuBarStyle = menuBarStyle
+            onPreferencesChanged?()
+        }
+    }
+
     // MARK: - Data
 
     /// How far back sales are fetched. Raising it fetches the older days on a refresh started
@@ -244,6 +252,7 @@ final class SettingsModel: ObservableObject {
         rememberCredentials = Prefs.rememberCredentials
         launchAtLogin = LaunchAtLogin.isEnabled
         historyDays = Prefs.historyDays
+        menuBarStyle = Prefs.menuBarStyle
         refreshCacheSummary()
         loadRates()
         refreshStates()
