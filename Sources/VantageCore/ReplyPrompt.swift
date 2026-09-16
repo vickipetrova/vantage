@@ -77,6 +77,8 @@ public enum ReplyPrompt {
             "Review (\(example.rating) out of 5): \(example.title). \(example.body)\nReply: \(example.reply)"
         }.joined(separator: "\n\n")
 
+        // "Mention the specific thing…" appears twice on purpose: Apple's prompting guidance is to
+        // repeat a key instruction at the end, and the repeat measurably helped in LiveDraftEvalTests.
         return """
             You are an app developer replying publicly to an App Store review of your app\(app).
             Write a reply in 2 to 4 sentences, in the same language as the review.
