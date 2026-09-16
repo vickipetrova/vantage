@@ -17,7 +17,15 @@ public enum DraftCleanup {
 
     static let refusals = [
         "i'm sorry, but i can't", "i am sorry, but i cannot", "i cannot help", "i can't help",
-        "i can't assist", "i cannot assist",
+        "i can't assist", "i cannot assist", "i apologize, but i can't", "i apologize, but i cannot",
+    ]
+
+    /// Phrases that mark a short reply as a refusal regardless of its opening words — "I apologize
+    /// for the error, but I can't fulfill your request." doesn't start with anything in `refusals`,
+    /// but it isn't a reply to publish either.
+    static let refusalPhrases = [
+        "fulfill your request", "fulfill this request", "comply with this request",
+        "comply with your request",
     ]
 
     static let closings: Set<String> = [
@@ -114,7 +122,8 @@ public enum DraftCleanup {
 
     static func isRefusal(_ text: String) -> Bool {
         let lowered = folded(text)
-        return refusals.contains { lowered.hasPrefix($0) }
+        if refusals.contains(where: lowered.hasPrefix) { return true }
+        return refusalPhrases.contains { lowered.contains($0) }
     }
 
     static func containsPlaceholder(_ text: String) -> Bool {

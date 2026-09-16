@@ -80,6 +80,19 @@ final class DraftCleanupTests: XCTestCase {
         XCTAssertEqual(error("I cannot help with this."), .declined)
     }
 
+    /// "I apologize, but..." doesn't start with any of the shorter refusal prefixes on its own —
+    /// what marks it as a refusal is the "fulfill your request" phrase anywhere in a short reply.
+    func testAnApologyThatCannotFulfillTheRequestIsDeclined() {
+        XCTAssertEqual(error("I apologize for the error, but I can't fulfill your request."), .declined)
+        XCTAssertEqual(error("I apologize, but I cannot help with that."), .declined)
+    }
+
+    /// The word "request" alone, in an ordinary reply, must not trip the refusal phrase check.
+    func testAnOrdinaryReplyMentioningARequestIsNotARefusal() {
+        let reply = "Thanks for the feature request! Dark mode is a popular idea."
+        XCTAssertEqual(cleaned(reply), reply)
+    }
+
     /// A long reply that happens to open with an apology is a reply, not a refusal.
     func testALongApologyIsNotARefusal() {
         let reply = "I'm sorry, but I can't reproduce the crash yet on my own Mac, which makes this one hard. "

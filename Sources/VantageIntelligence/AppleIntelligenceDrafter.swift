@@ -3,6 +3,7 @@ import VantageCore
 #if canImport(FoundationModels)
 import FoundationModels
 import Observation
+import NaturalLanguage
 #endif
 
 /// The drafter for this Mac, or nil where there can't be one: a build without the framework, or
@@ -41,7 +42,7 @@ final class AppleIntelligenceDrafter: ReplyDrafter {
 
     func prewarm(_ request: DraftRequest) {
         guard availability == .available else { return }
-        let session = LanguageModelSession(model: model, instructions: request.instructions)
+        let session = LanguageModelSession(model: model, instructions: Self.instructions(for: request))
         session.prewarm(promptPrefix: Prompt(request.prompt))
         lock.withLock { warm = (request, session) }
     }
@@ -51,7 +52,7 @@ final class AppleIntelligenceDrafter: ReplyDrafter {
         let session: LanguageModelSession = lock.withLock {
             defer { warm = nil }
             if let warm, warm.request == request { return warm.session }
-            return LanguageModelSession(model: model, instructions: request.instructions)
+            return LanguageModelSession(model: model, instructions: Self.instructions(for: request))
         }
         do {
             let response = try await session.respond(
@@ -73,6 +74,22 @@ final class AppleIntelligenceDrafter: ReplyDrafter {
                 self?.observeAvailability(onChange)
             }
         }
+    }
+
+    // MARK: - Language, decided in code rather than left to the model
+
+    /// `ReplyPrompt` already asks for a reply "in the same language as the review", but that line
+    /// alone wasn't enough: a German or Japanese review came back in English in evaluation. This
+    /// detects the review's language from `request.prompt` — never `instructions`, which is ours —
+    /// and appends one line naming it when it isn't English, which the model follows far more
+    /// reliably than the generic instruction on its own.
+    static func instructions(for request: DraftRequest) -> String {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(request.prompt)
+        guard let language = recognizer.dominantLanguage, language != .english,
+              let name = Locale(identifier: "en").localizedString(forLanguageCode: language.rawValue)
+        else { return request.instructions }
+        return request.instructions + "\nThe review is written in \(name). Write the reply in \(name)."
     }
 
     // MARK: - Mapping, at the boundary

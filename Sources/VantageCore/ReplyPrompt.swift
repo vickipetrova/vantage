@@ -73,6 +73,7 @@ public enum ReplyPrompt {
             DO NOT promise dates, fixes, refunds or new features.
             DO NOT include links, email addresses, phone numbers, prices or a sign-off.
             DO NOT ask the customer to change their rating.
+            Mention the specific thing the customer wrote about.
 
             Examples:
 
