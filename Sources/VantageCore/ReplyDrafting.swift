@@ -64,3 +64,39 @@ public enum DraftError: Error, Equatable, Sendable {
         }
     }
 }
+
+/// Something that can draft a reply. Today, only Apple's on-device model, in `VantageIntelligence`.
+///
+/// The seam exists so everything around the model is testable without one, and so `VantageCore`
+/// never imports `FoundationModels`. Implementations throw only `DraftError` or
+/// `CancellationError`.
+public protocol ReplyDrafter: AnyObject {
+    var availability: DraftAvailability { get }
+    /// Loads the model ahead of a likely request. Cheap to call; may do nothing.
+    func prewarm(_ request: DraftRequest)
+    func draft(_ request: DraftRequest) async throws -> String
+    /// Calls `onChange` on the main queue whenever `availability` may have changed, for as long as
+    /// the drafter lives. Call once.
+    func observeAvailability(_ onChange: @escaping () -> Void)
+}
+
+public enum ReplyDrafting {
+    /// The cleaned draft, the reason there isn't one, or nil if the task was cancelled.
+    public static func run(_ request: DraftRequest,
+                           with drafter: ReplyDrafter) async -> Result<String, DraftError>? {
+        guard drafter.availability == .available else {
+            return .failure(.unavailable(drafter.availability))
+        }
+        do {
+            let raw = try await drafter.draft(request)
+            try Task.checkCancellation()
+            return DraftCleanup.clean(raw)
+        } catch is CancellationError {
+            return nil
+        } catch let error as DraftError {
+            return .failure(error)
+        } catch {
+            return .failure(.failed)
+        }
+    }
+}
