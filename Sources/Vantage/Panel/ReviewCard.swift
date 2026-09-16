@@ -63,8 +63,11 @@ struct ReviewCard: View {
             if let draft = model.drafts[review.id] {
                 ReplyComposer(
                     review: review,
+                    // Reads live state, not the `draft` captured at render. A keystroke landing
+                    // after a draft arrived but before re-render would otherwise edit the stale
+                    // `.drafting` copy and write it back: draft lost, spinner with no task behind it.
                     draft: Binding(
-                        get: { draft },
+                        get: { model.drafts[review.id] ?? draft },
                         set: { new in model.updateDraft(review.id) { $0 = new } }),
                     draftAvailability: model.draftAvailability,
                     onPublish: { model.publishReply(to: review.id) },
