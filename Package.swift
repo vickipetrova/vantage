@@ -13,7 +13,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "VantageCore"),
-        .executableTarget(name: "Vantage", dependencies: ["VantageCore"]),
+        // The only target that imports FoundationModels. Kept apart from VantageCore so Core stays
+        // Foundation-only, and apart from the app so the live evaluation can run as a test.
+        .target(name: "VantageIntelligence", dependencies: ["VantageCore"]),
+        .executableTarget(name: "Vantage", dependencies: ["VantageCore", "VantageIntelligence"]),
         // The agent-facing half. Read-only by construction: it links VantageCore, which is where
         // the cache lives, and nothing that can fetch or publish.
         //
@@ -23,5 +26,7 @@ let package = Package(
         .executableTarget(name: "VantageCLI", dependencies: ["VantageCore"],
                           path: "Sources/VantageCLI"),
         .testTarget(name: "VantageCoreTests", dependencies: ["VantageCore"]),
+        .testTarget(name: "VantageIntelligenceTests",
+                    dependencies: ["VantageIntelligence", "VantageCore"]),
     ]
 )
