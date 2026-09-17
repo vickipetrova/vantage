@@ -119,7 +119,8 @@ GET https://*.amazonaws.com/…                                      (analytics 
 ```
 
 The first two carry the app's whole purpose. Two more exist only to draw an app's icon beside its
-row, and the fifth only if you open Analytics — v0.1 really did talk to two hosts and nothing else.
+row, and the fifth only if you added a reviews key — v0.1 really did talk to two hosts and nothing
+else.
 
 **Why a third and fourth host for something so small:** the App Store Connect API has no icon. There
 is no artwork field on `/v1/apps/{id}`, and no endpoint that returns one. The public storefront
@@ -142,8 +143,20 @@ What protects you there:
 - **The URL comes from Apple**, over an authenticated connection to `api.appstoreconnect.apple.com`,
   and expires five minutes after Apple issues it.
 - **The bytes are checked** against the MD5 Apple published for them before anything is parsed.
-- **It only ever happens if you added a reviews key and opened the Analytics section.** Nothing
-  fetches from this host in the background.
+- **It only ever happens if you added a reviews key.** No key, no analytics, and nothing is ever
+  requested from this host.
+
+**It does happen in the background, and that is deliberate.** Engagement figures live on the
+Overview now rather than behind a section you had to open, and Vantage fetches them from every
+refresh — launch, waking from sleep, the poll timer — as well as when you open the panel or click
+Refresh Now. A first run also imports whatever history Apple still holds for each app, which is
+more of these downloads than a normal day's.
+
+The reason is retention, not convenience: Apple deletes a day's analytics after 35 days, so a day
+nobody collects is *gone* rather than merely late. What keeps the cost down is the six-hour
+staleness gate in `AnalyticsStore`, which settles at one to four fetches a day however often the
+timer fires — not restraint about when to ask. None of that changes what leaves your machine: the
+download still carries no credential, and the bytes are still checked before they're parsed.
 
 `docs/ANALYTICS_API.md` explains the whole lifecycle and why it looks like this.
 

@@ -29,7 +29,10 @@ type, and you filter later:
 ```
 
 `accessType` is `ONGOING` (keeps producing daily, weekly and monthly reports) or
-`ONE_TIME_SNAPSHOT` (historical data, generated once and then stopped). Vantage uses `ONGOING`.
+`ONE_TIME_SNAPSHOT` (historical data, generated once and then stopped). **Vantage creates one of
+each per app** — `ONGOING` for the daily chart, one snapshot for the history that predates it. Apple
+accepts both for the same app; verified against the live API on 2026-09-17. See
+[The snapshot, and the history that predates the chart](#the-snapshot-and-the-history-that-predates-the-chart).
 
 **Creating a request needs an Admin key.** Once one exists, a lesser role can read the results —
 which is why `ASCAnalyticsClient` checks for an existing request before trying to create one, and
@@ -102,6 +105,40 @@ Three facts that shape the code:
 `checksum` is MD5 of the compressed bytes. Weak as a hash, but it is what Apple offers and it catches
 the failure that actually happens — a truncated download.
 
+## The snapshot, and the history that predates the chart
+
+An `ONGOING` request only produces days **from its own creation onwards**. Verified against the live
+API on 2026-09-17: a three-day-old request had exactly one daily instance. So a fresh install's
+chart starts the day analytics was switched on and fills in over the following month, and nothing
+about the ongoing request will ever reach further back.
+
+`ONE_TIME_SNAPSHOT` is the only route to what came before. It is generated once and then stops —
+`stoppedDueToInactivity` on a snapshot is normal and is **not** a reason to create another. Apple
+accepts one snapshot alongside one ongoing request for the same app. `AnalyticsSnapshotDecision`
+answers which one to read, deliberately separate from `AnalyticsRequestDecision` so the two access
+types can't interfere.
+
+What the import does, per app:
+
+- **One snapshot request, created once.** The first call almost always creates it and returns an
+  empty instance list, because generation takes the same 24–48 hours an ongoing report does. That
+  is the expected answer on a first run, not a failure.
+- **`AnalyticsStore.historyInstanceCap` (50) instances per refresh**, oldest processing date first.
+  A snapshot can hold years and every instance is a segments call plus a download per segment; a
+  bounded bite keeps a first run from becoming hundreds of requests. The next refresh resumes where
+  this one stopped, and the app is marked imported only when nothing is left.
+- **Only the instances that actually completed are recorded.** `history` answers with an
+  `AnalyticsHistorySlice` — the days *and* the instance IDs that finished, meaning segments listed
+  and every segment downloaded. The walk degrades on purpose, and recording what was *asked for*
+  rather than what landed would mark unread instances done and lose those days for good once Apple
+  expires them.
+- **Every failure is silent.** No Admin key to create the snapshot, nothing generated yet, an HTTP
+  error — each leaves the daily analytics exactly as they were and the panel says nothing. The
+  history is a bonus; the daily figures are the product.
+
+The days land in the same per-app file as the daily walk, merged by date, so `AnalyticsStore` is
+where an app's history outlives Apple's 35-day retention.
+
 ## The report format
 
 Segments are **gzipped TSV**, so `Gunzip` and the match-columns-by-normalized-name discipline from
@@ -142,10 +179,15 @@ The overlap is not optional: Apple revises a day as late events land and a day i
 days after it, so a refresh that took only genuinely new days would keep the first provisional
 figures forever.
 
+A first look at an app costs more than that, once: the history import adds a snapshot request list
+and up to `historyInstanceCap` (50) segments-plus-download rounds per refresh until the snapshot is
+exhausted. It then never runs for that app again.
+
 Rate limits are the same 3,500-per-hour rolling window as everything else on this API.
 
 Analytics is fetched on **every refresh** — launch, wake and the poll timer included — and also on
-opening the panel, opening the Analytics section, and Refresh Now.
+opening the panel and Refresh Now. There is no Analytics section to open any more: engagement is on
+the Overview, so it is on screen from the moment the panel appears.
 
 Background fetching is deliberate, and the reason is retention rather than convenience: Apple keeps
 daily instances for 35 days, so a history nobody collects is *lost*, not merely late. An app sitting
