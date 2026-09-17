@@ -111,6 +111,20 @@ final class DraftCleanupTests: XCTestCase {
 
     // MARK: - Rejected
 
+    /// The model sometimes copies the review back instead of answering it. That text is the
+    /// customer's words under the developer's name, so it must never reach the editor as a draft.
+    func testAnEchoOfTheReviewIsRejected() {
+        XCTAssertEqual(error("Rating: 1 out of 5\nTitle: Waste of time\nReview:\nTerrible app, 0 stars if I could"), .rejected)
+        XCTAssertEqual(error("Rating: 1 out of 5\nTitle: Waste of time\nReview:\n\nI'm sorry to hear that."), .rejected)
+        XCTAssertEqual(error("Review (1 out of 5): Waste of time. Terrible app.\nReply: Sorry to hear that."), .rejected)
+    }
+
+    /// Ordinary replies can say "review" and "rating" without looking like the scaffolding.
+    func testRepliesMentioningReviewsAndRatingsStillPass() {
+        let reply = "Thanks for the review! Your rating and the detail about exports help us a lot."
+        XCTAssertEqual(cleaned(reply), reply)
+    }
+
     func testEmptyOutputIsRejected() {
         XCTAssertEqual(error(""), .rejected)
         XCTAssertEqual(error("  \"\"  "), .rejected)

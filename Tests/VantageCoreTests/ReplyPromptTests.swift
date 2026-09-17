@@ -56,14 +56,38 @@ final class ReplyPromptTests: XCTestCase {
         XCTAssertEqual(DraftRequest(instructions: "i", prompt: "p").languageSample, "p")
     }
 
+    /// The prompt asks for something and ends on the same "Reply:" cue as the examples. A prompt
+    /// that was only labelled data ("Rating: / Title: / Review:") was sometimes copied back
+    /// verbatim instead of answered: 3 of 20 live runs on a 1-star review.
     func testPromptLayout() {
         let request = ReplyPrompt.request(for: review(), appName: nil)
         XCTAssertEqual(request.prompt, """
-            Rating: 2 out of 5
-            Title: Crashes on export
-            Review:
-            Every PDF export freezes the app.
+            Write the developer's reply to this App Store review.
+
+            Review (2 out of 5): Crashes on export. Every PDF export freezes the app.
+            Reply:
             """)
+    }
+
+    /// Same shape as the examples in the instructions, so the model has one pattern to follow.
+    func testPromptUsesTheExampleFormat() {
+        let request = ReplyPrompt.request(for: review(), appName: nil)
+        let example = ReplyPrompt.examples[0]
+        XCTAssertTrue(request.instructions.contains("Review (\(example.rating) out of 5): \(example.title). \(example.body)\nReply: "))
+        XCTAssertTrue(request.prompt.contains("Review (2 out of 5): "))
+        XCTAssertTrue(request.prompt.hasSuffix("\nReply:"))
+    }
+
+    func testTitleAlreadyEndingInPunctuationGetsNoExtraFullStop() {
+        let request = ReplyPrompt.request(for: review(title: "Love it!", body: "Works well."), appName: nil)
+        XCTAssertTrue(request.prompt.contains("Review (2 out of 5): Love it! Works well.\nReply:"))
+    }
+
+    func testTitleOnlyAndBodyOnlyReviews() {
+        XCTAssertTrue(ReplyPrompt.request(for: review(title: "Pretty good", body: ""), appName: nil)
+            .prompt.contains("Review (2 out of 5): Pretty good\nReply:"))
+        XCTAssertTrue(ReplyPrompt.request(for: review(title: "", body: "Works well."), appName: nil)
+            .prompt.contains("Review (2 out of 5): Works well.\nReply:"))
     }
 
     // MARK: - Instructions
@@ -160,7 +184,9 @@ final class ReplyPromptTests: XCTestCase {
     func testCJKBodyIsCappedInCharacters() {
         let body = String(repeating: "返品したい", count: 1_000)   // 5,000 characters
         let request = ReplyPrompt.request(for: review(body: body), appName: nil)
-        let sentBody = request.prompt.components(separatedBy: "Review:\n")[1]
+        let sentBody = request.prompt
+            .components(separatedBy: "out of 5): Crashes on export. ")[1]
+            .replacingOccurrences(of: "\nReply:", with: "")
         XCTAssertLessThanOrEqual(sentBody.count, ReplyPrompt.bodyLimit + 1)
     }
 
@@ -168,7 +194,7 @@ final class ReplyPromptTests: XCTestCase {
         let request = ReplyPrompt.request(
             for: review(title: String(repeating: "t", count: 500), body: String(repeating: "b", count: 5_000)),
             appName: nil)
-        XCTAssertTrue(request.prompt.contains("Title: " + String(repeating: "t", count: 200) + "…\n"))
-        XCTAssertTrue(request.prompt.hasSuffix(String(repeating: "b", count: 2_000) + "…"))
+        XCTAssertTrue(request.prompt.contains("out of 5): " + String(repeating: "t", count: 200) + "… "))
+        XCTAssertTrue(request.prompt.hasSuffix(String(repeating: "b", count: 2_000) + "…\nReply:"))
     }
 }

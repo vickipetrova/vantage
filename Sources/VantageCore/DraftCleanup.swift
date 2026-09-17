@@ -49,7 +49,9 @@ public enum DraftCleanup {
 
         if text.isEmpty { return .failure(.rejected) }
         if text.count < refusalLength, isRefusal(text) { return .failure(.declined) }
-        if containsContactDetails(text) || containsPlaceholder(text) { return .failure(.rejected) }
+        if containsContactDetails(text) || containsPlaceholder(text) || echoesTheReview(text) {
+            return .failure(.rejected)
+        }
         guard ReplyValidation.check(text).isValid else { return .failure(.rejected) }
         return .success(text)
     }
@@ -130,6 +132,14 @@ public enum DraftCleanup {
         let lowered = folded(text)
         if refusals.contains(where: lowered.hasPrefix) { return true }
         return refusalPhrases.contains { lowered.contains($0) }
+    }
+
+    /// The review's own scaffolding — "Rating: 1 out of 5", a "Title:" line, or the examples'
+    /// "Review (1 out of 5):" — in what should be a reply. The model sometimes copies the prompt
+    /// back instead of answering; that would publish the customer's words under the developer's name.
+    static func echoesTheReview(_ text: String) -> Bool {
+        text.range(of: #"(?m)^\s*(Rating: \d out of 5|Title:|Review:|Review \(\d out of 5\):)"#,
+                   options: .regularExpression) != nil
     }
 
     static func containsPlaceholder(_ text: String) -> Bool {

@@ -104,13 +104,30 @@ public enum ReplyPrompt {
         }
     }
 
+    /// A request, then the review in exactly the examples' shape, ending on the same "Reply:" cue.
+    ///
+    /// The prompt used to be labelled data alone ("Rating: / Title: / Review:"), which asked for
+    /// nothing and matched none of the examples. The model copied it back instead of answering in
+    /// 3 of 20 live runs on a 1-star review; this shape did so in 0 of 40. The request line is ours,
+    /// and it sits before the untrusted review, which still never reaches the instructions.
     static func prompt(for review: CustomerReview) -> String {
         """
-        Rating: \(review.rating) out of 5
-        Title: \(trim(review.title, to: titleLimit))
-        Review:
-        \(trim(review.body, to: bodyLimit))
+        Write the developer's reply to this App Store review.
+
+        Review (\(review.rating) out of 5): \(reviewLine(for: review))
+        Reply:
         """
+    }
+
+    /// "Title. Body", as in the examples, without doubling punctuation or leaving a stray separator
+    /// when a review has only one of the two.
+    static func reviewLine(for review: CustomerReview) -> String {
+        let title = trim(review.title, to: titleLimit)
+        let body = trim(review.body, to: bodyLimit)
+        guard !title.isEmpty else { return body }
+        guard !body.isEmpty else { return title }
+        let separator = title.last.map { ".!?…。！？".contains($0) } == true ? " " : ". "
+        return title + separator + body
     }
 
     static func cleanAppName(_ name: String?) -> String? {
