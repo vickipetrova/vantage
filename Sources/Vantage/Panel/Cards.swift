@@ -88,8 +88,8 @@ struct AppRowView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .monospacedDigit()
-                    if let impressions = app.impressions {
-                        Text("\(Fmt.downloads(impressions)) impressions")
+                    if let impressionsLabel = app.impressionsLabel {
+                        Text(impressionsLabel)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .monospacedDigit()

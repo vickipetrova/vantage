@@ -102,6 +102,9 @@ public struct OverviewModel: Equatable {
         public let unitsLabel: String
         /// This app's impressions for the span. `nil` — never `0` — when Apple has none.
         public let impressions: Decimal?
+        /// Ready to render — `nil` exactly when `impressions` is nil. A view renders strings, it
+        /// doesn't compose them.
+        public let impressionsLabel: String?
         public var id: String { appleID }
     }
 
@@ -216,7 +219,10 @@ public struct OverviewModel: Equatable {
             apps.append(AppRow(appleID: app.appleID, title: app.title,
                                money: money(app.proceeds), units: app.units,
                                unitsLabel: Fmt.downloadsWithArrow(app.units),
-                               impressions: rowEngagement?.impressions))
+                               impressions: rowEngagement?.impressions,
+                               impressionsLabel: rowEngagement.map {
+                                   "\(Fmt.downloads($0.impressions)) impressions"
+                               }))
         }
         // Ranked by money only when the figures are actually comparable. Without a usable rate
         // table each row's `sortKey` is an amount in whichever currency it led with, so sorting on

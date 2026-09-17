@@ -535,4 +535,19 @@ final class OverviewModelTests: XCTestCase {
                      "An app with no analytics shows nothing, never 0")
     }
 
+    /// `AppRowView` renders this string rather than composing it — a view renders strings, it
+    /// doesn't build them.
+    func testAppRowsCarryAReadyMadeImpressionsLabel() {
+        let day = day(yesterday, units: 2, apps: [app("1", "Mine", ["USD": 5]),
+                                                   app("2", "Theirs", ["USD": 5])])
+        let model = OverviewModel.build(
+            days: [day], rates: nil, error: nil, metrics: [.installs], displayCurrency: "USD",
+            span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: ["1": [engagementDay(yesterday, impressions: 340, pageViews: 12)]], now: now)
+
+        XCTAssertEqual(model.apps.first { $0.appleID == "1" }?.impressionsLabel, "340 impressions")
+        XCTAssertNil(model.apps.first { $0.appleID == "2" }?.impressionsLabel,
+                     "An app with no analytics shows nothing, never 0")
+    }
+
 }

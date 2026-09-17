@@ -78,26 +78,6 @@ public enum TrendSeries: Hashable, Sendable {
     }
 }
 
-/// Which engagement figure a chart draws.
-public enum EngagementMetric: String, CaseIterable, Sendable {
-    case impressions
-    case pageViews
-
-    public var label: String {
-        switch self {
-        case .impressions: return "Impressions"
-        case .pageViews: return "Page views"
-        }
-    }
-
-    func value(in day: EngagementDay) -> Decimal {
-        switch self {
-        case .impressions: return day.impressions
-        case .pageViews: return day.pageViews
-        }
-    }
-}
-
 /// One day on the chart.
 public struct TrendPoint: Equatable, Sendable {
     public let date: ReportDate
