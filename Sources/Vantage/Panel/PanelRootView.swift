@@ -46,8 +46,6 @@ struct PanelRootView: View {
                 AppDetailView(model: model, appleID: appleID)
             case .reviews:
                 ReviewsView(model: model)
-            case .analytics:
-                AnalyticsView(model: model)
             }
         }
         .id(model.route)

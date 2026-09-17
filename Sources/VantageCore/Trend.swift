@@ -11,25 +11,32 @@ public enum TrendSeries: Hashable, Sendable {
     /// Converted gross customer spend — what changed hands, before Apple's cut.
     case sales
     case metric(Metric)
+    /// App Store engagement, from the analytics reports rather than the sales reports. Absent for
+    /// days Apple hasn't finalised — about two days — and for days before the report request
+    /// existed.
+    case impressions
+    case pageViews
 
     public var label: String {
         switch self {
         case .proceeds: return "Proceeds"
         case .sales: return "Sales"
         case .metric(let metric): return metric.label
+        case .impressions: return "Impressions"
+        case .pageViews: return "Page views"
         }
     }
 
-    /// Everything offerable, money first.
+    /// Everything offerable: money first, then units, then engagement.
     public static var displayOrder: [TrendSeries] {
-        [.proceeds, .sales] + Metric.displayOrder.map(TrendSeries.metric)
+        [.proceeds, .sales] + Metric.displayOrder.map(TrendSeries.metric) + [.impressions, .pageViews]
     }
 
     /// Whether this series is money, and so needs a rate table.
     var isMoney: Bool {
         switch self {
         case .proceeds, .sales: return true
-        case .metric: return false
+        case .metric, .impressions, .pageViews: return false
         }
     }
 
@@ -42,6 +49,8 @@ public enum TrendSeries: Hashable, Sendable {
         case .proceeds: return "proceeds"
         case .sales: return "sales"
         case .metric(let metric): return "metric:\(metric.rawValue)"
+        case .impressions: return "impressions"
+        case .pageViews: return "pageViews"
         }
     }
 
@@ -52,6 +61,14 @@ public enum TrendSeries: Hashable, Sendable {
         }
         if rawValue == "sales" {
             self = .sales
+            return
+        }
+        if rawValue == "impressions" {
+            self = .impressions
+            return
+        }
+        if rawValue == "pageViews" {
+            self = .pageViews
             return
         }
         guard rawValue.hasPrefix("metric:"),
@@ -125,19 +142,36 @@ public enum Trend {
     ///   - days: any order; only the window is used.
     ///   - end: the newest day on the chart, inclusive.
     ///   - appleID: restricts to one app. `nil` totals the whole portfolio.
+    ///   - engagement: analytics days, used only by `.impressions` and `.pageViews`.
     public static func series(days: [DaySales],
                               series: TrendSeries,
                               length: Int,
                               endingAt end: ReportDate,
                               rates: FXRates?,
                               displayCurrency: String,
-                              appleID: String? = nil) -> TrendData {
+                              appleID: String? = nil,
+                              engagement: [EngagementDay] = []) -> TrendData {
         // Proceeds across several currencies is not a number without rates, and the honest answer
         // is to draw nothing and say why — the same rule the headline figure follows.
         if series.isMoney, rates == nil {
             return TrendData(points: [], lower: 0, upper: 0, zeroUnit: nil,
                              upperLabel: "", lowerLabel: "",
                              unavailable: "Exchange rates unavailable — can't chart money")
+        }
+
+        // Engagement comes from a different API with a different schedule, so it has its own
+        // lookup. Everything below — gaps, the range including zero, the labels — is the same.
+        if series == .impressions || series == .pageViews {
+            let byDate = Dictionary(engagement.map { ($0.date, $0) },
+                                    uniquingKeysWith: { first, _ in first })
+            let dates = end.lastDays(length).sorted()
+            var values: [ReportDate: Decimal] = [:]
+            for date in dates {
+                guard let day = byDate[date] else { continue }  // Absent stays absent.
+                values[date] = series == .impressions ? day.impressions : day.pageViews
+            }
+            return numeric(values: values, dates: dates, series: series,
+                           displayCurrency: displayCurrency)
         }
 
         let byDate = Dictionary(days.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
@@ -160,6 +194,14 @@ public enum Trend {
             values[date] = amount
         }
 
+        return numeric(values: values, dates: dates, series: series, displayCurrency: displayCurrency)
+    }
+
+    /// The drawn shape, once the values are known: range including zero, gaps preserved, labels.
+    private static func numeric(values: [ReportDate: Decimal],
+                                dates: [ReportDate],
+                                series: TrendSeries,
+                                displayCurrency: String) -> TrendData {
         let present = values.values
         // The drawn range always includes zero: a downloads chart whose floor is 40 exaggerates
         // every wobble, and one with refunds in it needs the axis visible to read the sign.
@@ -189,50 +231,12 @@ public enum Trend {
         // Compact: an axis label is read for magnitude, and cents on it are four characters nobody
         // acts on — the same call the menu bar title makes.
         case .proceeds, .sales: return Fmt.moneyCompact(value, currency: displayCurrency)
-        case .metric: return Fmt.downloads(value)
+        case .metric, .impressions, .pageViews: return Fmt.downloads(value)
         }
     }
 
     /// One day's value. `value` is nil when the day can't be stated as a number at all; `partial`
     /// marks a day that could be stated but left something out.
-    /// A chart series over engagement days.
-    ///
-    /// Same rules as the sales series and for the same reasons: a day Apple hasn't produced is a
-    /// **gap**, not a zero, and the drawn range always includes zero so a floor of 40,000
-    /// impressions doesn't turn a 2% wobble into a cliff.
-    public static func engagement(days: [EngagementDay],
-                                  metric: EngagementMetric,
-                                  length: Int,
-                                  endingAt end: ReportDate) -> TrendData {
-        let byDate = Dictionary(days.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
-        let dates = end.lastDays(length).sorted()
-
-        var values: [ReportDate: Decimal] = [:]
-        for date in dates {
-            guard let day = byDate[date] else { continue }
-            values[date] = metric.value(in: day)
-        }
-
-        let present = values.values
-        let lower = min(0, present.min() ?? 0)
-        let upper = max(0, present.max() ?? 0)
-        let span = upper - lower
-
-        let points = dates.map { date -> TrendPoint in
-            guard let value = values[date] else {
-                return TrendPoint(date: date, value: nil, unit: nil)
-            }
-            return TrendPoint(date: date, value: value,
-                              unit: span == 0 ? 0 : Self.double((value - lower) / span))
-        }
-
-        return TrendData(points: points, lower: lower, upper: upper,
-                         zeroUnit: nil,
-                         upperLabel: Fmt.downloads(upper),
-                         lowerLabel: Fmt.downloads(lower),
-                         unavailable: nil)
-    }
-
     private static func value(of series: TrendSeries, in day: DaySales, appleID: String?,
                               rates: FXRates?, displayCurrency: String)
         -> (value: Decimal?, partial: Bool) {
@@ -263,6 +267,9 @@ public enum Trend {
                 return (Metric.units(in: app, metrics: [metric]), false)
             }
             return (metric.units(in: day), false)
+        case .impressions, .pageViews:
+            // Handled earlier in `series(...)`, which never calls this function for engagement.
+            return (nil, true)
         }
     }
 
