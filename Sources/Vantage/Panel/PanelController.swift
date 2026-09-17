@@ -72,9 +72,10 @@ final class PanelController: NSObject {
         panel.invalidateShadow()
         startMonitoring()
 
-        // Opening the panel *is* opening the app, so analytics refreshes here rather than only when
-        // the Analytics section happens to be looked at. A chart nobody visits for a fortnight was
-        // silently losing days it could still have had.
+        // Opening the panel *is* opening the app, so analytics refreshes here as well as from the
+        // poll timer. Engagement sits on the Overview now, so it is on screen the moment this
+        // returns — and a chart nobody looked at for a fortnight was silently losing days it could
+        // still have had.
         //
         // Not forced: `AnalyticsStore.maxAge` means a panel opened twenty times in a day costs at
         // most four refreshes, and this path is passive — the user didn't ask for anything.

@@ -134,7 +134,8 @@ private struct ReviewsTab: View {
             } header: {
                 Text("Reviews & Analytics key — optional")
             } footer: {
-                Text("One key powers both the Reviews and Analytics sections. The Sales and "
+                Text("One key reads both your reviews and the engagement figures on the "
+                     + "Overview. The Sales and "
                      + "Reports key above can't read either — Apple gates them behind different "
                      + "roles — and giving that key a bigger role would widen what it could do "
                      + "with your sales data.\n\n"

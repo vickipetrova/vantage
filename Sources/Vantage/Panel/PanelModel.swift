@@ -343,7 +343,7 @@ final class PanelModel: ObservableObject {
     /// Loads engagement, cache first and the network only where the cache is stale.
     ///
     /// Called from every refresh — launch, wake and the poll timer included — plus opening the
-    /// panel, opening the Analytics section, and Refresh Now.
+    /// panel and Refresh Now.
     ///
     /// Firing in the background is the point: a chart nobody visits still has to keep up, and Apple
     /// deletes daily instances after 35 days, so history that isn't collected is lost rather than
@@ -371,11 +371,37 @@ final class PanelModel: ObservableObject {
 
         isLoadingAnalytics = true
         analyticsError = nil
-        let deadline = DispatchTime.now() + .seconds(120 + outstanding.count * 60)
+        // **The chain clears this flag; the timer below only catches the case where it never
+        // does.** `fetchAnalytics` sets it false when it runs off the end of the list, and that is
+        // the normal outcome. The timer is a backstop against a provider completion that never
+        // arrives, which would otherwise latch the flag and block every later load for the life of
+        // the process.
+        //
+        // So it has to outlast the work rather than the typical run. Sized for the newest-days walk
+        // alone it fired *during* a first history import — up to `historyInstanceCap` snapshot
+        // instances per app, sequentially — and the `guard !isLoadingAnalytics` above then let a
+        // second chain start over the same apps while the first was still going.
+        let deadline = DispatchTime.now() + .seconds(watchdogSeconds(for: outstanding))
         DispatchQueue.main.asyncAfter(deadline: deadline) { [weak self] in
             self?.isLoadingAnalytics = false
         }
         fetchAnalytics(outstanding, index: 0)
+    }
+
+    /// A segments call (30s timeout) plus its downloads (60s each), per snapshot instance. Not a
+    /// measurement — an upper bound, which is the only useful kind of number for a backstop.
+    private static let secondsPerHistoryInstance = 90
+
+    /// How long to wait before assuming the chain died, given the work actually outstanding.
+    ///
+    /// An app that still owes its history costs far more than one that doesn't, so they're counted
+    /// separately: a fixed per-app figure is what made the timer a normal outcome instead of a
+    /// backstop.
+    private func watchdogSeconds(for outstanding: [String]) -> Int {
+        let daily = outstanding.count * 60
+        let history = outstanding.filter { analyticsStore.needsHistory($0) }.count
+            * AnalyticsStore.historyInstanceCap * Self.secondsPerHistoryInstance
+        return 120 + daily + history
     }
 
     private func fetchAnalytics(_ appleIDs: [String], index: Int) {

@@ -74,8 +74,8 @@ public struct AnalyticsStore {
 
     /// How many of the newest daily instances this app needs, given how long it's been.
     ///
-    /// **This used to be a fixed 7**, which quietly meant that not opening the Analytics section
-    /// for a fortnight left days 8–14 missing forever: every later refresh asked for the newest
+    /// **This used to be a fixed 7**, which quietly meant that not opening Vantage for a fortnight
+    /// left days 8–14 missing forever: every later refresh asked for the newest
     /// seven again, and nothing ever went back for the rest. Apple still had them — it keeps
     /// instances for 35 days — so the data was reachable the whole time and simply never requested.
     ///
