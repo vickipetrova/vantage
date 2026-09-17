@@ -8,7 +8,7 @@ struct OverviewView: View {
     private var overview: OverviewModel {
         OverviewModel.build(days: model.days, rates: model.rates, error: model.error,
                             metrics: model.metrics, displayCurrency: Prefs.displayCurrency,
-                            span: model.span)
+                            span: model.span, engagement: model.engagement)
     }
 
     var body: some View {
@@ -28,6 +28,9 @@ struct OverviewView: View {
                         }
                     }
                     TrendCard(model: model)
+                    if let note = model.engagementState {
+                        EngagementNoteCard(note: note, onSettings: model.onSettings)
+                    }
                     apps(overview)
                     notes(overview)
                 }
@@ -95,6 +98,30 @@ private struct EmptyStateView: View {
             }
             // Every error whose fix is a credential is one click from the credentials.
             if message.contains("Settings") || message.contains("key") {
+                Button("Open Settings…") { onSettings?() }
+                    .controlSize(.small)
+            }
+        }
+        .card()
+    }
+}
+
+/// Why the chart has no impressions to draw — the states the Analytics tab used to own.
+private struct EngagementNoteCard: View {
+    let note: EngagementNote
+    let onSettings: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.tight) {
+            Text(note.title)
+                .font(.system(size: 13, weight: .semibold))
+            if !note.body.isEmpty {
+                Text(note.body)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if note.offersSettings {
                 Button("Open Settings…") { onSettings?() }
                     .controlSize(.small)
             }

@@ -88,6 +88,12 @@ struct AppRowView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .monospacedDigit()
+                    if let impressions = app.impressions {
+                        Text("\(Fmt.downloads(impressions)) impressions")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
                 }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -179,6 +185,16 @@ struct HeadlineCard: View {
                 }
             }
 
+            if let engagement = headline.engagement {
+                Text(engagement.line)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else if let note = headline.engagementNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             notes
         }
         .card()
@@ -240,7 +256,9 @@ struct TrendCard: View {
         let chart = model.window.chart(newest: model.newestDay)
         return Trend.series(days: model.days, series: model.trendSeries, length: chart.length,
                             endingAt: chart.end, rates: model.rates,
-                            displayCurrency: Prefs.displayCurrency, appleID: appleID)
+                            displayCurrency: Prefs.displayCurrency, appleID: appleID,
+                            engagement: appleID.map { model.engagement[$0] ?? [] }
+                                ?? model.portfolioEngagement)
     }
 
     var body: some View {

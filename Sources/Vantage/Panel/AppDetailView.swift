@@ -12,7 +12,8 @@ struct AppDetailView: View {
     private var detail: AppDetailModel {
         AppDetailModel.build(appleID: appleID, days: model.days, rates: model.rates,
                              error: model.error, metrics: model.metrics,
-                             displayCurrency: Prefs.displayCurrency, span: model.span)
+                             displayCurrency: Prefs.displayCurrency, span: model.span,
+                             engagement: model.engagement)
     }
 
     var body: some View {

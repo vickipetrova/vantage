@@ -322,14 +322,17 @@ final class PanelModel: ObservableObject {
     @Published private(set) var engagement: [String: [EngagementDay]] = [:]
     @Published private(set) var analyticsError: Error?
     @Published private(set) var isLoadingAnalytics = false
-    @Published private(set) var engagementMetric: EngagementMetric = .impressions
 
     private let analyticsProvider: AnalyticsProvider = ASCAnalyticsClient()
     private let analyticsStore = AnalyticsStore()
 
-    func select(_ metric: EngagementMetric) {
-        guard metric != engagementMetric else { return }
-        engagementMetric = metric
+    /// Why there are no engagement figures, or nil when there's nothing to say. Decided in Core —
+    /// see `EngagementState`.
+    var engagementState: EngagementNote? {
+        EngagementState.note(hasKey: hasReviewsKey,
+                             isLoading: isLoadingAnalytics,
+                             hasDays: !portfolioEngagement.isEmpty,
+                             error: analyticsError)
     }
 
     /// Every app's engagement days, summed by date.
