@@ -136,14 +136,21 @@ public struct OverviewModel: Equatable {
                              displayCurrency: String,
                              range: OverviewRange = .yesterday,
                              engagement: [String: [EngagementDay]] = [:],
+                             hasEngagementSource: Bool = true,
                              now: Date = Date()) -> OverviewModel {
         build(days: days, rates: rates, error: error, metrics: metrics,
-              displayCurrency: displayCurrency, span: range.span, engagement: engagement, now: now)
+              displayCurrency: displayCurrency, span: range.span, engagement: engagement,
+              hasEngagementSource: hasEngagementSource, now: now)
     }
 
     /// - Parameters:
     ///   - days: newest first.
     ///   - span: what the headline and the app rows cover.
+    ///   - hasEngagementSource: whether engagement figures could arrive at all. False when there is
+    ///     no reviews key — analytics is readable only because that key exists — and then the
+    ///     headline says nothing about impressions rather than promising figures that are never
+    ///     coming. The card below already explains that a key is what's missing; two answers to the
+    ///     same question, one of them false, is worse than one.
     ///   - now: injected so the "fetched at" and "checked at" strings are testable.
     public static func build(days: [DaySales],
                              rates: FXRates?,
@@ -152,6 +159,7 @@ public struct OverviewModel: Equatable {
                              displayCurrency: String,
                              span: Span,
                              engagement: [String: [EngagementDay]] = [:],
+                             hasEngagementSource: Bool = true,
                              now: Date = Date()) -> OverviewModel {
         let days = days.sorted { $0.date > $1.date }
 
@@ -207,7 +215,7 @@ public struct OverviewModel: Equatable {
             assumedZeroNote: span.length == 1 && window.first?.origin == .assumedZero
                 ? "No report published — recorded as zero" : nil,
             engagement: engagementSummary,
-            engagementNote: engagementSummary == nil
+            engagementNote: engagementSummary == nil && hasEngagementSource
                 ? "Impressions not available yet for these days" : nil)
 
         // MARK: Apps

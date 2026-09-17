@@ -506,6 +506,31 @@ final class OverviewModelTests: XCTestCase {
                        "Impressions not available yet for these days")
     }
 
+    /// "Not available **yet**" promises figures that are coming. With no reviews key nothing is
+    /// coming, and the card below already explains that a key is what's missing — two different
+    /// answers to the same question, one of them false.
+    func testWithNoEngagementSourceTheHeadlineSaysNothingAboutImpressions() {
+        let model = OverviewModel.build(
+            days: [day(yesterday, units: 10)], rates: nil, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            hasEngagementSource: false, now: now)
+
+        XCTAssertNil(model.headline?.engagement)
+        XCTAssertNil(model.headline?.engagementNote,
+                     "The card explains the missing key; the headline must not contradict it")
+    }
+
+    /// The same span, with a key: the note is the right answer again.
+    func testWithAnEngagementSourceTheHeadlineStillSaysTheyArePending() {
+        let model = OverviewModel.build(
+            days: [day(yesterday, units: 10)], rates: nil, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            hasEngagementSource: true, now: now)
+
+        XCTAssertEqual(model.headline?.engagementNote,
+                       "Impressions not available yet for these days")
+    }
+
     func testTheRetentionFootnoteAppearsOnlyWithEngagementFigures() {
         let note = "Apple keeps analytics for 35 days — older days are Vantage's own copy."
 

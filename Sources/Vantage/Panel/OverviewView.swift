@@ -8,7 +8,8 @@ struct OverviewView: View {
     private var overview: OverviewModel {
         OverviewModel.build(days: model.days, rates: model.rates, error: model.error,
                             metrics: model.metrics, displayCurrency: Prefs.displayCurrency,
-                            span: model.span, engagement: model.engagement)
+                            span: model.span, engagement: model.engagement,
+                            hasEngagementSource: model.hasReviewsKey)
     }
 
     var body: some View {

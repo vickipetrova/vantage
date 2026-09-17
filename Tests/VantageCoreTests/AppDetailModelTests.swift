@@ -134,4 +134,17 @@ final class AppDetailModelTests: XCTestCase {
         XCTAssertEqual(model.summary.headline?.engagementNote,
                        "Impressions not available yet for these days")
     }
+
+    /// The detail section is the Overview's arithmetic on one app, so the "no key, no promise"
+    /// rule has to reach it too — otherwise the same panel says two different things depending on
+    /// which card you clicked.
+    func testWithNoEngagementSourceAnAppsHeadlineSaysNothingAboutImpressions() {
+        let days = [day(yesterday, apps: [app("1", "Mine", ["USD": 1])])]
+        let model = AppDetailModel.build(
+            appleID: "1", days: days, rates: rates, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: [:], hasEngagementSource: false, now: now)
+
+        XCTAssertNil(model.summary.headline?.engagementNote)
+    }
 }
