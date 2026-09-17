@@ -8,6 +8,19 @@ public protocol AnalyticsProvider {
     ///   longer than a week repairs itself instead of leaving a permanent hole.
     func engagement(forApp appleID: String, instances: Int,
                     completion: @escaping (Result<[EngagementDay], Error>) -> Void)
+
+    /// The app's `ONE_TIME_SNAPSHOT` daily instances, **oldest processing date first**, creating
+    /// the snapshot request if the app has none yet.
+    ///
+    /// An `ONGOING` request only produces days from its own creation onwards, so the history Apple
+    /// still holds is reachable no other way. A newly created snapshot answers with an empty list:
+    /// Apple takes 24–48 hours to generate one, exactly as it does for the first ongoing report.
+    func snapshotInstances(forApp appleID: String,
+                           completion: @escaping (Result<[String], Error>) -> Void)
+
+    /// Downloads and parses specific instances. The caller decides which, and how many.
+    func history(instanceIDs: [String],
+                 completion: @escaping (Result<[EngagementDay], Error>) -> Void)
 }
 
 /// Walks the Analytics Reports API's four steps and parses what falls out.
@@ -138,14 +151,14 @@ public struct ASCAnalyticsClient: AnalyticsProvider {
 
     // MARK: - Step 2: create
 
-    private func createRequest(appleID: String,
+    private func createRequest(appleID: String, accessType: String = "ONGOING",
                                completion: @escaping (Result<AnalyticsRequest, Error>) -> Void) {
         let payload: [String: Any] = [
             "data": [
                 "type": "analyticsReportRequests",
-                // ONGOING, not ONE_TIME_SNAPSHOT: Vantage wants each new day as it lands, which is
-                // what ONGOING produces. A snapshot stops after one generation.
-                "attributes": ["accessType": "ONGOING"],
+                // ONGOING for the daily chart; ONE_TIME_SNAPSHOT once per app for the history
+                // that predates it. Apple accepts one of each for the same app.
+                "attributes": ["accessType": accessType],
                 "relationships": ["app": ["data": ["type": "apps", "id": appleID]]],
             ],
         ]
@@ -168,27 +181,104 @@ public struct ASCAnalyticsClient: AnalyticsProvider {
         }
     }
 
+    // MARK: - History, from a one-time snapshot
+
+    public func snapshotInstances(forApp appleID: String,
+                                  completion: @escaping (Result<[String], Error>) -> Void) {
+        guard keyProvider() != nil else {
+            completion(.failure(AnalyticsError.noKey))
+            return
+        }
+        guard !appleID.isEmpty, appleID.allSatisfy({ $0.isNumber }) else {
+            completion(.failure(AnalyticsError.badResponse))
+            return
+        }
+
+        get("/v1/apps/\(appleID)/analyticsReportRequests?limit=50") { result in
+            switch result {
+            case .failure(let error):
+                completion(.failure(error))
+            case .success(let data):
+                switch AnalyticsSnapshotDecision.decide(from: AnalyticsDecoder.requests(from: data)) {
+                case .create:
+                    // Nothing to read for a day or two. Creating it is the whole point of this
+                    // call on a first run; the instances arrive on a later refresh.
+                    self.createRequest(appleID: appleID, accessType: "ONE_TIME_SNAPSHOT") { result in
+                        completion(result.map { _ in [] })
+                    }
+                case .use(let requestID):
+                    self.engagementReportID(for: requestID) { result in
+                        switch result {
+                        case .failure(let error):
+                            completion(.failure(error))
+                        case .success(let reportID):
+                            self.get("/v1/analyticsReports/\(reportID)/instances"
+                                     + "?filter[granularity]=DAILY&limit=200") { result in
+                                completion(result.map { data in
+                                    AnalyticsDecoder.instances(from: data)
+                                        // Oldest first: the caller imports a capped bite per
+                                        // refresh, and each bite should extend the history.
+                                        .sorted { $0.processingDate < $1.processingDate }
+                                        .map(\.id)
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public func history(instanceIDs: [String],
+                        completion: @escaping (Result<[EngagementDay], Error>) -> Void) {
+        guard keyProvider() != nil else {
+            completion(.failure(AnalyticsError.noKey))
+            return
+        }
+        guard !instanceIDs.isEmpty else {
+            completion(.success([]))
+            return
+        }
+        // Same walk as a daily refresh: segments, then one pre-signed download at a time.
+        let instances = instanceIDs.map {
+            AnalyticsInstance(id: $0, granularity: "DAILY", processingDate: "")
+        }
+        collect(instances, index: 0, days: [], completion: completion)
+    }
+
     // MARK: - Step 3: the report
 
     private func reports(for requestID: String, instances: Int,
                          completion: @escaping (Result<[EngagementDay], Error>) -> Void) {
+        engagementReportID(for: requestID) { result in
+            switch result {
+            case .failure(let error): completion(.failure(error))
+            case .success(let reportID):
+                self.instances(for: reportID, limit: instances, completion: completion)
+            }
+        }
+    }
+
+    /// The one report in the engagement category that carries impressions and page views. Shared
+    /// by the daily walk and the history import, which differ only in which request they start from.
+    private func engagementReportID(for requestID: String,
+                                    completion: @escaping (Result<String, Error>) -> Void) {
         get("/v1/analyticsReportRequests/\(requestID)/reports"
             + "?filter[category]=APP_STORE_ENGAGEMENT&limit=200") { result in
             switch result {
             case .failure(let error):
                 completion(.failure(error))
             case .success(let data):
-                let reports = AnalyticsDecoder.reports(from: data)
                 // Matched on the name rather than taking the first: the engagement category holds
                 // several reports, and only this one carries impressions and page views.
-                guard let report = reports.first(where: {
+                guard let report = AnalyticsDecoder.reports(from: data).first(where: {
                     SegmentParser.normalize($0.name)
                         .contains(SegmentParser.normalize(Self.reportNameFragment))
                 }) else {
                     completion(.failure(AnalyticsError.notReadyYet))
                     return
                 }
-                self.instances(for: report.id, limit: instances, completion: completion)
+                completion(.success(report.id))
             }
         }
     }

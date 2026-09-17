@@ -180,7 +180,8 @@ else. Apple enforces that claim — a scoped token used against any other reques
 **Write tokens carry no scope claim, because Apple accepts none.** A `POST`, `PATCH` or `DELETE`
 whose token is scoped is answered `405 METHOD_NOT_ALLOWED`; a verbless entry or an empty array is
 `400 ENTITY_INVALID`; a `GET` entry is `403`. Only an unscoped token is accepted, so the two writes
-Vantage can make — creating an analytics report request, and publishing a review reply — are
+Vantage can make — creating an analytics report request (ongoing, and one historical snapshot per
+app), and publishing a review reply — are
 limited by the `aud` claim and the five-minute lifetime rather than by scope. Tokens are held in
 memory for the request and dropped — never written to disk.
 

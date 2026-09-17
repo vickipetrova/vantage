@@ -205,6 +205,14 @@ segments, download each from a pre-signed S3 URL that expires in **five minutes*
 Three things that bite:
 
 - **`processingDate` is not the date the data describes.** The rows carry their own `Date` column.
+- **An `ONGOING` request only produces days from its own creation onwards.** Verified against the
+  live API on 2026-09-17: a three-day-old request had exactly one daily instance, and the panel
+  showed three days. Everything older is reachable only through a **`ONE_TIME_SNAPSHOT`** request,
+  which Apple accepts alongside the ongoing one for the same app. `PanelModel.importHistory` asks
+  for one per app on first refresh, imports `AnalyticsStore.historyInstanceCap` instances per
+  refresh until none are left, then marks the app done and never reads it again. A snapshot takes
+  the same 24–48 hours to generate, so the first answer is an empty list, and every failure here is
+  silent — the daily analytics carry on unchanged.
 - **Instances are kept 35 days.** `AnalyticsStore` merges rather than replaces, so older days exist
   only in Vantage's copy. Each refresh asks for as many instances as the gap since the last one
   needs (`AnalyticsStore.instancesNeeded`), capped at those 35 — a fixed count silently abandons

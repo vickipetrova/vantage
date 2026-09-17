@@ -401,8 +401,61 @@ final class PanelModel: ObservableObject {
                         return
                     }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    self.fetchAnalytics(appleIDs, index: index + 1)
+                self.importHistory(for: appleID) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        self.fetchAnalytics(appleIDs, index: index + 1)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Imports whatever history Apple still holds for one app, once.
+    ///
+    /// An `ONGOING` report request only produces days from its own creation onwards, so a new
+    /// install's chart would start the day it was set up and fill in over a month. A
+    /// `ONE_TIME_SNAPSHOT` covers what came before, and `AnalyticsStore` merges it into the same
+    /// file — so this runs until every snapshot instance has been imported and then never again.
+    ///
+    /// Bounded and silent on purpose: a capped number of instances per refresh, and any failure
+    /// (no Admin key to create the snapshot, nothing generated yet, an HTTP error) leaves the daily
+    /// analytics exactly as they were. Nothing here is worth an error in the panel.
+    private func importHistory(for appleID: String, then next: @escaping () -> Void) {
+        guard analyticsStore.needsHistory(appleID) else {
+            next()
+            return
+        }
+        analyticsProvider.snapshotInstances(forApp: appleID) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, case .success(let available) = result, !available.isEmpty else {
+                    next()
+                    return
+                }
+                let pending = self.analyticsStore.pendingHistoryInstances(available, for: appleID)
+                guard !pending.isEmpty else {
+                    self.analyticsStore.markHistoryImported(appleID)
+                    next()
+                    return
+                }
+                self.analyticsProvider.history(instanceIDs: pending) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self else {
+                            next()
+                            return
+                        }
+                        if case .success(let days) = result {
+                            self.engagement[appleID] =
+                                self.analyticsStore.merge(days, for: appleID)
+                            self.analyticsStore.recordHistoryInstances(pending, for: appleID)
+                            // Done only when nothing is left: a capped run leaves the rest for the
+                            // next refresh.
+                            if self.analyticsStore
+                                .pendingHistoryInstances(available, for: appleID).isEmpty {
+                                self.analyticsStore.markHistoryImported(appleID)
+                            }
+                        }
+                        next()
+                    }
                 }
             }
         }

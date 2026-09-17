@@ -68,6 +68,33 @@ public enum AnalyticsRequestDecision: Equatable, Sendable {
     }
 }
 
+/// Which `ONE_TIME_SNAPSHOT` request an app's history comes from.
+///
+/// Separate from `AnalyticsRequestDecision` because the two access types answer different
+/// questions and must not interfere: `ONGOING` feeds the daily chart from its own creation
+/// onwards, and a snapshot is the only way to reach what came before it. Apple accepts one of
+/// each for the same app — verified against the live API on 2026-09-17.
+public enum AnalyticsSnapshotDecision: Equatable, Sendable {
+    /// Read this snapshot's instances.
+    case use(String)
+    /// No snapshot exists for this app yet.
+    case create
+
+    public static func decide(from requests: [AnalyticsRequest]) -> AnalyticsSnapshotDecision {
+        let snapshots = requests.filter { $0.accessType == "ONE_TIME_SNAPSHOT" }
+        // A stopped snapshot is a finished one, not a broken one: "one time" means it generates
+        // once and stops. Its instances stay readable until Apple expires them, and asking for a
+        // second request for the same app is how a `409 STATE_ERROR` dead end starts.
+        if let live = snapshots.first(where: { !$0.stoppedDueToInactivity }) {
+            return .use(live.id)
+        }
+        if let finished = snapshots.first {
+            return .use(finished.id)
+        }
+        return .create
+    }
+}
+
 public struct AnalyticsReport: Equatable, Sendable {
     public let id: String
     public let name: String
