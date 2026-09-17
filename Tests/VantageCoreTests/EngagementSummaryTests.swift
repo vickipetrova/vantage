@@ -51,6 +51,22 @@ final class EngagementSummaryTests: XCTestCase {
         XCTAssertEqual(summary?.daysCovered, 1)
     }
 
+    /// The portfolio hands in every app's days flattened together — there is no per-app dimension
+    /// left by then. Counting entries would call three apps over three days nine days covered,
+    /// which is a number that can exceed the span it describes.
+    func testDaysCoveredCountsDatesRatherThanAppDays() {
+        let threeAppsOverTwoDays = [day(15, impressions: 100, pageViews: 10),
+                                    day(15, impressions: 200, pageViews: 20),
+                                    day(15, impressions: 300, pageViews: 30),
+                                    day(16, impressions: 100, pageViews: 10),
+                                    day(16, impressions: 200, pageViews: 20),
+                                    day(16, impressions: 300, pageViews: 30)]
+        let summary = EngagementSummary.build(days: threeAppsOverTwoDays, from: start, to: end)
+
+        XCTAssertEqual(summary?.daysCovered, 2)
+        XCTAssertEqual(summary?.impressions, 1_200, "Every row still counts toward the totals")
+    }
+
     func testTheLineReadsAsASentence() {
         let days = [day(14, impressions: 1_000, pageViews: 45),
                     day(15, impressions: 1_140, pageViews: 51)]

@@ -14,7 +14,11 @@ public struct EngagementSummary: Equatable, Sendable {
     public let pageViews: Decimal
     /// Page views as a percentage of impressions. `nil` when there were no impressions.
     public let conversion: Decimal?
-    /// How many days in the span actually had data.
+    /// How many **distinct dates** in the span actually had data.
+    ///
+    /// Dates, not rows: the portfolio hands in every app's days flattened together, so counting
+    /// rows would report three apps over a week as 21 days — a figure that can exceed the span it
+    /// claims to describe.
     public let daysCovered: Int
 
     public init(impressions: Decimal, pageViews: Decimal, conversion: Decimal?, daysCovered: Int) {
@@ -37,7 +41,7 @@ public struct EngagementSummary: Equatable, Sendable {
             impressions: impressions,
             pageViews: pageViews,
             conversion: impressions > 0 ? pageViews / impressions * 100 : nil,
-            daysCovered: window.count)
+            daysCovered: Set(window.map(\.date)).count)
     }
 
     /// The headline's engagement line.
