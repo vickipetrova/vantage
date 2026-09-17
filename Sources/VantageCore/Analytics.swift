@@ -108,6 +108,26 @@ public struct AnalyticsInstance: Equatable, Sendable {
     public let processingDate: String
 }
 
+/// What one history import actually managed to fetch.
+///
+/// The days **and** the instances they came from, because a history walk is allowed to stop
+/// part-way: a segments call that fails, or a download that never finishes, still leaves everything
+/// before it true. Returning only the days would let the caller assume the whole batch landed and
+/// record instances that were never read — and a snapshot instance recorded but not imported is a
+/// day that exists nowhere once Apple expires it 35 days later.
+///
+/// So the caller records `completedInstanceIDs` and nothing else. An instance is completed only
+/// when its segments were listed and every one of them downloaded.
+public struct AnalyticsHistorySlice: Equatable, Sendable {
+    public let days: [EngagementDay]
+    public let completedInstanceIDs: [String]
+
+    public init(days: [EngagementDay], completedInstanceIDs: [String]) {
+        self.days = days
+        self.completedInstanceIDs = completedInstanceIDs
+    }
+}
+
 public struct AnalyticsSegment: Equatable, Sendable {
     public let id: String
     /// A pre-signed AWS S3 URL, valid for **five minutes** from the moment the segments call

@@ -446,10 +446,15 @@ final class PanelModel: ObservableObject {
                             next()
                             return
                         }
-                        if case .success(let days) = result {
+                        if case .success(let slice) = result {
                             self.engagement[appleID] =
-                                self.analyticsStore.merge(days, for: appleID)
-                            self.analyticsStore.recordHistoryInstances(pending, for: appleID)
+                                self.analyticsStore.merge(slice.days, for: appleID)
+                            // What the client says it finished, never what was asked for. A walk
+                            // that stops half way still returns `.success`, and recording the whole
+                            // batch would abandon every instance it never reached — permanently,
+                            // once Apple expires them 35 days later.
+                            self.analyticsStore.recordHistoryInstances(slice.completedInstanceIDs,
+                                                                       for: appleID)
                             // Done only when nothing is left: a capped run leaves the rest for the
                             // next refresh.
                             if self.analyticsStore

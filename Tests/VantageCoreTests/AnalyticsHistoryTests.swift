@@ -107,6 +107,41 @@ final class AnalyticsHistoryTests: XCTestCase {
                        Array(oldestFirst.dropFirst()))
     }
 
+    /// A download that gives up part-way must leave the rest of the work to do.
+    ///
+    /// `ASCAnalyticsClient.collect` degrades on purpose — a segments call that fails mid-run still
+    /// returns whatever parsed before it, because partial data is true data. What it may **not** do
+    /// is let the caller record the whole batch: the instances that never ran would be marked
+    /// imported, the app marked done, and those days would exist nowhere once Apple expires them.
+    /// So the slice names the instances it actually finished, and only those are recorded.
+    func testOnlyTheInstancesTheSliceCompletedAreRecorded() {
+        let store = store()
+        let asked = ["a", "b", "c", "d"]
+        let slice = AnalyticsHistorySlice(
+            days: [EngagementDay(date: ReportDate(year: 2026, month: 9, day: 16),
+                                 impressions: 10, pageViews: 2)],
+            completedInstanceIDs: ["a", "b"])
+
+        store.merge(slice.days, for: "123")
+        store.recordHistoryInstances(slice.completedInstanceIDs, for: "123")
+
+        XCTAssertEqual(store.pendingHistoryInstances(asked, for: "123"), ["c", "d"],
+                       "What failed or never ran is still pending")
+        XCTAssertTrue(store.needsHistory("123"),
+                      "An app is done only when nothing is left, not when a run ends")
+    }
+
+    /// The other half of the same rule: a slice that completed nothing records nothing, so the next
+    /// refresh asks for exactly the same instances again.
+    func testASliceThatCompletedNothingRecordsNothing() {
+        let store = store()
+        let slice = AnalyticsHistorySlice(days: [], completedInstanceIDs: [])
+        store.recordHistoryInstances(slice.completedInstanceIDs, for: "123")
+
+        XCTAssertEqual(store.pendingHistoryInstances(["a", "b"], for: "123"), ["a", "b"])
+        XCTAssertTrue(store.needsHistory("123"))
+    }
+
     /// The cache file predates this feature on every existing install.
     func testAnEntryWrittenBeforeThisFeatureStillWantsItsHistory() throws {
         let store = store()
