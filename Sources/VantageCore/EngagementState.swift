@@ -19,6 +19,10 @@ public struct EngagementNote: Equatable, Sendable {
 /// Turns the analytics situation into that note. In Core, not a view, so `swift test` covers the
 /// difference between "wait a day" and "your key is wrong".
 public enum EngagementState {
+    private static let waitingExplanation = "Vantage has asked Apple to start generating analytics for your apps. Apple "
+        + "takes 24 to 48 hours to produce the first one, and there is nothing else to "
+        + "do — it will appear here on its own. This is not an error."
+
     /// `nil` when there is nothing to say — which includes a failed refresh over days that are
     /// already cached: those figures are still true, and the status bar carries the failure.
     public static func note(hasKey: Bool,
@@ -38,7 +42,7 @@ public enum EngagementState {
 
         if isLoading {
             return EngagementNote(title: "Checking with App Store Connect…",
-                                  body: "", offersSettings: false)
+                                  body: waitingExplanation, offersSettings: false)
         }
 
         // Asked of the error itself, where a test can reach it. Deriving this from `!stopsTheRun`
@@ -48,9 +52,7 @@ public enum EngagementState {
         if isWaiting {
             return EngagementNote(
                 title: "Apple is preparing your first report",
-                body: "Vantage has asked Apple to start generating analytics for your apps. Apple "
-                    + "takes 24 to 48 hours to produce the first one, and there is nothing else to "
-                    + "do — it will appear here on its own. This is not an error.",
+                body: waitingExplanation,
                 offersSettings: false)
         }
 

@@ -31,6 +31,15 @@ final class EngagementStateTests: XCTestCase {
         XCTAssertFalse(note?.offersSettings == true)
     }
 
+    /// Loading changes the headline, not the explanation underneath it — a titled card with no
+    /// body is what the old Analytics tab never showed.
+    func testLoadingKeepsTheWaitingExplanation() {
+        let loading = EngagementState.note(hasKey: true, isLoading: true, hasDays: false, error: nil)
+        let waiting = EngagementState.note(hasKey: true, isLoading: false, hasDays: false, error: nil)
+        XCTAssertEqual(loading?.body, waiting?.body)
+        XCTAssertFalse(loading?.body.isEmpty == true)
+    }
+
     /// The normal state for a day or two after analytics is switched on. Not an error, and the
     /// note must not offer the Settings button — that suggests the key is wrong when it isn't.
     func testWaitingForApplesFirstReportIsNotAnError() {
