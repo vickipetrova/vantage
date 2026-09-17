@@ -69,6 +69,8 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/ASCAnalyticsClient.swift` | The four-step analytics lifecycle |
 | `Sources/VantageCore/SegmentParser.swift` | Gzipped TSV → `EngagementDay` |
 | `Sources/VantageCore/AnalyticsStore.swift` | Merging archive, and how many instances a refresh needs |
+| `Sources/VantageCore/EngagementSummary.swift` | Impressions, page views and conversion for the days on screen |
+| `Sources/VantageCore/EngagementState.swift` | Why there are no engagement figures, in one note |
 | `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
 | `Sources/VantageCore/CacheQuery.swift` | Read-only answers about the cache, for the CLI and MCP |
 | `Sources/VantageCore/QueryRange.swift` | Any span of days the CLI and MCP ask for — parsed strictly, resolved against the cache |
@@ -227,6 +229,10 @@ Three things that bite:
 - **Swift treats `\r\n` as one `Character`**, so `split(separator: "\n")` never matches it.
   Normalize line endings first, as `ReportParser` does. `SegmentParser` shipped with this wrong and
   a test caught it.
+- **Engagement lives on the Overview, not its own tab.** Impressions and page views are two more
+  `TrendSeries` cases, and the headline's third line is `EngagementSummary`. The "no key", "Apple is
+  preparing your first report" and error states are `EngagementState`, in Core, because deciding
+  them in a view is what let a hard failure read as a normal wait for a month.
 
 ## The report format
 

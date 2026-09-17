@@ -8,6 +8,11 @@ All notable changes to Vantage are documented here. The format follows
 
 ### Added
 
+- **Engagement where you're already looking.** Impressions, page views and the share of impressions
+  that became page views now sit on the Overview and on each app, with both available as chart
+  series. The separate Analytics tab is gone, and so is its second metric picker.
+- **The analytics history Apple still holds.** A one-time snapshot request per app fills in the days
+  before Vantage started asking, rather than starting from the day you set it up.
 - **An app icon** — a watchtower on a dawn gradient, built with Icon Composer so macOS 26 shows
   proper Dark, Clear and Tinted variants, with a flat fallback for macOS 13–15.
 - **Menu bar: numbers, icon, or both**, in Settings › General. With the icon alone, loading dims it
