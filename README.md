@@ -112,6 +112,12 @@ Admin key in practice — a much bigger thing to hand an app. See
 [docs/REVIEWS_API.md](docs/REVIEWS_API.md) for which roles Apple grants what, and for which of those
 facts Apple actually publishes.
 
+With replying on, the composer can **draft a reply** using Apple Intelligence on your Mac — nothing
+is sent anywhere, and it costs nothing. You get Undo and Try again, and a draft is published only
+after the same confirmation as anything you type — read each one before publishing, since it can
+promise something you didn't intend. Drafting needs macOS 26, Apple silicon, and Apple Intelligence
+switched on; elsewhere the button isn't shown.
+
 > [!NOTE]
 > **Setup is a form, not a walkthrough.** It assumes you already know what an Issuer ID is. A guided
 > first-run flow is the top item on the roadmap — see [Onboarding](#onboarding-is-not-there-yet).
@@ -225,6 +231,7 @@ sends nothing anywhere; a tool you point at it might.
 - **macOS 13+** (Ventura). Launch at login uses `SMAppService`, which is 13.0 and later.
 - **An App Store Connect account with an Active Paid Applications agreement** and at least one app.
   Free apps are fine — they report units with no proceeds, and Vantage shows the downloads.
+- **Drafting replies (optional)** needs macOS 26 on Apple silicon with Apple Intelligence on.
 
 ## Settings
 

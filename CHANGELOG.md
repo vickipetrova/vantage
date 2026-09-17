@@ -8,6 +8,10 @@ All notable changes to Vantage are documented here. The format follows
 
 ### Added
 
+- **Draft review replies with Apple Intelligence**, on your Mac, with no network request and no
+  key. Undo and Try again; a draft never skips the publish confirmation. Needs macOS 26, Apple
+  silicon and Apple Intelligence on; the button is hidden elsewhere, and says so when Apple
+  Intelligence is off or still downloading.
 - **An app icon** — a watchtower on a dawn gradient, built with Icon Composer so macOS 26 shows
   proper Dark, Clear and Tinted variants, with a flat fallback for macOS 13–15.
 - **Menu bar: numbers, icon, or both**, in Settings › General. With the icon alone, loading dims it
