@@ -8,8 +8,12 @@ import VantageCore
 struct ReplyComposer: View {
     let review: CustomerReview
     @Binding var draft: ReplyDraft
+    let draftAvailability: DraftAvailability
     let onPublish: () -> Void
     let onCancel: () -> Void
+    let onDraft: () -> Void
+    let onUndoDraft: () -> Void
+    let onOpenAppleIntelligenceSettings: () -> Void
 
     @FocusState private var isFocused: Bool
 
@@ -48,7 +52,17 @@ struct ReplyComposer: View {
                 .lineLimit(3...8)
                 .focused($isFocused)
 
+            assistStatus
+
             HStack(spacing: Theme.Space.tight) {
+                if draft.assist == .idle, draftAvailability != .hidden {
+                    Button(action: onDraft) {
+                        Label("Draft", systemImage: "sparkles")
+                    }
+                    .controlSize(.small)
+                    .disabled(draftAvailability == .preparing)
+                    .help("Draft a reply using Apple Intelligence on this Mac")
+                }
                 if let message = draft.validation.message {
                     Text(message)
                         .font(.caption)
@@ -74,6 +88,52 @@ struct ReplyComposer: View {
             }
         }
         .onAppear { isFocused = true }
+    }
+
+    /// Drafting progress, the "drafted" disclosure, or why drafting didn't work. Empty when idle and
+    /// available, so a composer nobody drafts in looks exactly as it did.
+    @ViewBuilder
+    private var assistStatus: some View {
+        switch draft.assist {
+        case .idle:
+            if draftAvailability == .preparing, let message = draftAvailability.message {
+                Text(message).font(.caption).foregroundColor(.secondary)
+            }
+        case .drafting:
+            HStack(spacing: Theme.Space.tight) {
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+                Text("Drafting…").font(.caption).foregroundColor(.secondary)
+            }
+        case .drafted:
+            HStack(spacing: Theme.Space.tight) {
+                // Apple's guidance: say where AI was used, and that it can be wrong.
+                Text("Drafted with Apple Intelligence. Check it before publishing.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button("Undo", action: onUndoDraft).buttonStyle(.link).font(.caption)
+                Button("Try again", action: onDraft).buttonStyle(.link).font(.caption)
+            }
+        case .failed(let error, let undo):
+            HStack(spacing: Theme.Space.tight) {
+                Text(error.message)
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if error == .unavailable(.turnedOff) {
+                    Button("Open Settings", action: onOpenAppleIntelligenceSettings)
+                        .buttonStyle(.link).font(.caption)
+                }
+                if undo != nil {
+                    Button("Undo", action: onUndoDraft).buttonStyle(.link).font(.caption)
+                }
+                if error.canRetry {
+                    Button("Try again", action: onDraft).buttonStyle(.link).font(.caption)
+                }
+            }
+        }
     }
 
     // MARK: - Outcomes

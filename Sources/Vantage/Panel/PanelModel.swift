@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 import VantageCore
+import VantageIntelligence
 
 /// Everything the panel renders, and the only thing its views read from.
 ///
@@ -298,7 +299,11 @@ final class PanelModel: ObservableObject {
         hasReviewsKey = KeychainStore.hasReviewsKey
         repliesEnabled = Prefs.repliesEnabled
         writer = Self.makeWriter()
-        if !repliesEnabled { drafts = [:] }
+        if !repliesEnabled {
+            draftTasks.values.forEach { $0.task.cancel() }
+            draftTasks = [:]
+            drafts = [:]
+        }
         if !hasReviewsKey {
             reviews = [:]
             reviewStore.forgetAll()
@@ -418,9 +423,12 @@ final class PanelModel: ObservableObject {
     func beginReply(to review: CustomerReview) {
         guard repliesEnabled else { return }
         drafts[review.id] = ReplyDraft(reviewID: review.id, existing: review.response)
+        prepareDrafting(for: review)
     }
 
     func cancelReply(to reviewID: String) {
+        draftTasks[reviewID]?.task.cancel()
+        draftTasks[reviewID] = nil
         drafts[reviewID] = nil
     }
 
@@ -430,6 +438,110 @@ final class PanelModel: ObservableObject {
         guard var draft = drafts[reviewID] else { return }
         change(&draft)
         drafts[reviewID] = draft
+        // A draft that stopped drafting by any route — Review reply…, Undo, a result landing — has
+        // no use for the model's answer, so stop the model rather than let it run on. The completion
+        // hop clears its own entry before calling here, so its token check is unaffected.
+        if case .drafting = draft.assist { return }
+        if let running = draftTasks[reviewID] {
+            running.task.cancel()
+            draftTasks[reviewID] = nil
+        }
+    }
+
+    // MARK: - Drafting
+
+    /// Apple's on-device model, or nil on a Mac or macOS that can't have it. Runs on this Mac only.
+    private let drafter: ReplyDrafter? = makeReplyDrafter()
+    /// Read by the composer. `.hidden` until a composer first opens.
+    @Published private(set) var draftAvailability: DraftAvailability = .hidden
+    private var isObservingDraftAvailability = false
+    /// One per review being drafted, so Cancel can stop the model rather than ignore its answer.
+    ///
+    /// Paired with a token rather than keyed on the task alone: the completion hop below can only
+    /// clear its own entry, not whichever task happens to be there when it runs — otherwise a
+    /// cancelled draft's own unwind could clear a second draft's task out from under it, and Cancel
+    /// would stop being able to stop that one.
+    private var draftTasks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
+
+    /// Checked each time a composer opens, and observed after that, so switching Apple Intelligence
+    /// on or finishing its download shows up without reopening anything.
+    private func prepareDrafting(for review: CustomerReview) {
+        guard let drafter else { return }
+        if !isObservingDraftAvailability {
+            isObservingDraftAvailability = true
+            drafter.observeAvailability { [weak self] in self?.refreshDraftAvailability() }
+        }
+        refreshDraftAvailability()
+        // Opening the composer is the "strong signal" Apple's prewarm documentation asks for, and
+        // the review is already known, so the whole prompt can be processed ahead of the click.
+        if draftAvailability == .available {
+            drafter.prewarm(draftRequest(for: review))
+        }
+    }
+
+    private func refreshDraftAvailability() {
+        draftAvailability = drafter?.availability ?? .hidden
+        // Clears "Turn on Apple Intelligence" from any composer that failed while it was off.
+        if draftAvailability == .available {
+            for reviewID in drafts.keys { updateDraft(reviewID) { $0.availabilityChanged() } }
+        }
+    }
+
+    private func draftRequest(for review: CustomerReview) -> DraftRequest {
+        // `titleForApp` falls back to the Apple ID, which is no name to put in a prompt.
+        let title = titleForApp(review.appleID)
+        return ReplyPrompt.request(for: review, appName: title == review.appleID ? nil : title)
+    }
+
+    func draftReply(to review: CustomerReview) {
+        guard let drafter else { return }
+        refreshDraftAvailability()
+        var started = false
+        updateDraft(review.id) { started = $0.beginDrafting() }
+        guard started else { return }
+
+        let request = draftRequest(for: review)
+        draftTasks[review.id]?.task.cancel()
+        let reviewID = review.id
+        let token = UUID()
+        let task = Task { [weak self] in
+            let result = await ReplyDrafting.run(request, with: drafter)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                // Only clears this task's own entry. A cancelled draft's unwind reaching here after
+                // a second Draft has already replaced the entry would otherwise clear the new task,
+                // leaving Cancel unable to stop it.
+                if self.draftTasks[reviewID]?.token == token {
+                    self.draftTasks[reviewID] = nil
+                }
+                // Cancelled on the main actor after `ReplyDrafting.run` last checked — by leaving
+                // drafting, say — so its answer must not land on whatever drafting started since.
+                guard let result, !Task.isCancelled else { return }
+                // `updateDraft` does nothing if the composer was closed, and `ReplyDraft` refuses a
+                // draft if the user typed meanwhile or reopened the composer.
+                self.updateDraft(reviewID) { draft in
+                    switch result {
+                    case .success(let text): draft.applyDraft(text)
+                    case .failure(let error): draft.draftFailed(error)
+                    }
+                }
+            }
+        }
+        draftTasks[review.id] = (token, task)
+    }
+
+    func undoDraft(to reviewID: String) {
+        updateDraft(reviewID) { $0.undoDraft() }
+    }
+
+    /// The Apple Intelligence & Siri pane. Apple doesn't document these identifiers and has renamed
+    /// panes between releases, so a refusal falls back to System Settings itself.
+    func openAppleIntelligenceSettings() {
+        if let pane = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension"),
+           NSWorkspace.shared.open(pane) {
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
     }
 
     /// The write capability, or nil.
