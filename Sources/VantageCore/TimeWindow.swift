@@ -31,10 +31,23 @@ public struct TimeWindow: Equatable, Sendable {
         self.end = end
     }
 
-    /// A custom window. The ends may be given in either order; one reaching the newest day or past
-    /// it becomes Latest.
-    public static func custom(from: ReportDate, to: ReportDate, newest: ReportDate) -> TimeWindow {
-        let (start, finish) = from <= to ? (from, to) : (to, from)
+    /// A custom window, over the days the cache actually has.
+    ///
+    /// The ends may be given in either order, and each is pulled into `oldest...newest`. The date
+    /// fields that feed this are deliberately unbounded — a field with a maximum date clamps every
+    /// keystroke, so typing a month before its year snaps the whole date to the cap and throws the
+    /// entry away, which is what `CustomRangeEditor` says. Bounding the answer instead of the
+    /// typing is what makes them usable, and it's the same clamp `shifted` applies to a drag.
+    ///
+    /// One end reaching the newest day, or past it, becomes Latest.
+    public static func custom(from: ReportDate, to: ReportDate,
+                              oldest: ReportDate, newest: ReportDate) -> TimeWindow {
+        let (low, high) = from <= to ? (from, to) : (to, from)
+        // `min` with `newest` too: an empty cache reports the same day as both ends, and a
+        // half-written one could report them the wrong way round.
+        let floor = min(oldest, newest)
+        let start = min(max(low, floor), newest)
+        let finish = min(max(high, floor), newest)
         return TimeWindow(length: start.days(to: finish) + 1, preset: nil,
                           end: finish >= newest ? nil : finish)
     }

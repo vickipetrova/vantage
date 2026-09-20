@@ -108,7 +108,7 @@ final class PanelModel: ObservableObject {
 
     func selectCustom(from: ReportDate, to: ReportDate) {
         isEditingRange = false
-        window = TimeWindow.custom(from: from, to: to, newest: newestDay)
+        window = TimeWindow.custom(from: from, to: to, oldest: oldestDay, newest: newestDay)
     }
 
     /// ‹ and ›.
