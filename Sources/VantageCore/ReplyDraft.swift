@@ -42,6 +42,26 @@ public struct ReplyDraft: Equatable {
         case failed(message: String)
     }
 
+    /// Drafting with Apple Intelligence, alongside `stage` and deliberately not inside it.
+    ///
+    /// Nothing here can move `stage`, so the confirm-before-send invariant is untouched: a draft is
+    /// just text in the editor, and reaches the App Store by the same two steps as typed text.
+    public enum Assist: Equatable {
+        case idle
+        /// `textRevision` is the text's revision when drafting began. If the user types before the
+        /// draft arrives, the revisions differ and the draft is discarded. `undo` is the user's own
+        /// text when a draft is already in the editor (Try again), and nil otherwise.
+        case drafting(textRevision: Int, undo: String?)
+        /// A draft is in the editor, unedited. `original` is what Undo restores.
+        case drafted(original: String)
+        /// `undo` survives a failed Try again, so the user can still get back to their own text.
+        case failed(DraftError, undo: String?)
+    }
+
+    public private(set) var assist: Assist = .idle
+    /// Bumped on every real change to `text`. What makes "typed while drafting" detectable.
+    private var textRevision = 0
+
     public private(set) var stage: Stage
     public private(set) var text: String
     /// The review being answered. Carried here so a confirmation is bound to one review and can't
@@ -63,13 +83,29 @@ public struct ReplyDraft: Equatable {
     /// Whether the text is publishable. Not the same as whether it may be sent — see `confirm()`.
     public var validation: ReplyValidation.Result { ReplyValidation.check(text) }
 
+    /// What Undo would restore, or nil when there's nothing to undo.
+    public var undoText: String? {
+        switch assist {
+        case .drafted(let original): return original
+        case .failed(_, let undo): return undo
+        case .idle, .drafting: return nil
+        }
+    }
+
     // MARK: - Transitions
 
     /// Text may only change while editing. A draft awaiting confirmation shows exactly what will be
     /// sent, and letting it change underneath that would make the confirmation meaningless.
     public mutating func edit(_ newText: String) {
-        guard stage == .editing else { return }
+        guard stage == .editing, newText != text else { return }
         text = newText
+        textRevision += 1
+        // Editing a draft makes it the user's text. While drafting, `.drafting` stays so the
+        // arriving draft is refused by the revision check rather than silently dropped here.
+        switch assist {
+        case .drafted, .failed: assist = .idle
+        case .idle, .drafting: break
+        }
     }
 
     /// Step one of two. Refuses invalid text, so the confirmation is never shown for something that
@@ -78,6 +114,8 @@ public struct ReplyDraft: Equatable {
     public mutating func requestConfirmation() -> Bool {
         guard stage == .editing, validation.isValid else { return false }
         stage = .awaitingConfirmation
+        // Anything still drafting must not land on the text being confirmed.
+        assist = .idle
         return true
     }
 
@@ -110,6 +148,64 @@ public struct ReplyDraft: Equatable {
     public mutating func retry() {
         guard case .failed = stage else { return }
         stage = .editing
+    }
+
+    // MARK: - Drafting
+
+    /// Refused outside editing and while a draft is already on its way.
+    @discardableResult
+    public mutating func beginDrafting() -> Bool {
+        guard stage == .editing else { return false }
+        switch assist {
+        case .drafting:
+            return false
+        case .idle:
+            assist = .drafting(textRevision: textRevision, undo: nil)
+        case .drafted(let original):
+            assist = .drafting(textRevision: textRevision, undo: original)
+        case .failed(_, let undo):
+            assist = .drafting(textRevision: textRevision, undo: undo)
+        }
+        return true
+    }
+
+    /// Puts a draft in the editor, unless the user typed since it was asked for.
+    @discardableResult
+    public mutating func applyDraft(_ drafted: String) -> Bool {
+        guard case .drafting(let revision, let undo) = assist else { return false }
+        guard stage == .editing, revision == textRevision else {
+            assist = .idle
+            return false
+        }
+        let original = undo ?? text
+        text = drafted
+        textRevision += 1
+        assist = .drafted(original: original)
+        return true
+    }
+
+    public mutating func undoDraft() {
+        guard stage == .editing, let original = undoText else { return }
+        text = original
+        textRevision += 1
+        assist = .idle
+    }
+
+    public mutating func draftFailed(_ error: DraftError) {
+        guard case .drafting(_, let undo) = assist else { return }
+        assist = .failed(error, undo: undo)
+    }
+
+    /// Apple Intelligence became available. A failure that only said "unavailable" is out of date,
+    /// and leaving it would keep Open Settings on screen with no Draft button to come back to.
+    ///
+    /// Only a failure with nothing to undo is cleared. With `undo`, the editor usually holds an
+    /// unedited draft — but typing during a Try again that then fails leaves the user's own text
+    /// there, and `.failed` can't tell the two apart, so calling it `.drafted` could be untrue.
+    /// Those keep their Undo, which is the one thing they must not lose. Never touches `stage`.
+    public mutating func availabilityChanged() {
+        guard case .failed(.unavailable, undo: nil) = assist else { return }
+        assist = .idle
     }
 }
 

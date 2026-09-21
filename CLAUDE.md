@@ -64,6 +64,10 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/TimeWindow.swift` | Which days the panel shows — stepping, panning, custom ranges, clamping |
 | `Sources/VantageCore/AppDetailModel.swift` | One app's slice, narrowed then handed to `OverviewModel` |
 | `Sources/VantageCore/ReplyDraft.swift` | Where confirm-before-send is enforced, as a state machine |
+| `Sources/VantageCore/ReplyPrompt.swift` | The words sent to the on-device model — review text only ever in the prompt |
+| `Sources/VantageCore/DraftCleanup.swift` | Model output → text the composer may show, or why not |
+| `Sources/VantageCore/ReplyDrafting.swift` | The `ReplyDrafter` seam, its errors, and running a draft |
+| `Sources/VantageIntelligence/AppleIntelligenceDrafter.swift` | The only `import FoundationModels` (and `NaturalLanguage`) |
 | `Sources/VantageCore/ASCReviewsWriter.swift` | The only type that can publish a reply |
 | `Sources/VantageCore/Analytics.swift` | Analytics models, JSON:API decoding, the S3 host check |
 | `Sources/VantageCore/ASCAnalyticsClient.swift` | The four-step analytics lifecycle |
@@ -109,8 +113,8 @@ eventually) one new file.
    Number, or a minted JWT. `Credentials` is deliberately opaque to string interpolation. CI greps
    for it and also fails if a `.p8` or `.gz` is ever tracked.
 2. **Zero third-party dependencies.** Foundation, AppKit, CryptoKit, Compression, Security,
-   UserNotifications, ServiceManagement. Apple ships an OpenAPI SDK for this API; one endpoint does
-   not justify it.
+   UserNotifications, ServiceManagement, FoundationModels, NaturalLanguage. Apple ships an OpenAPI
+   SDK for this API; one endpoint does not justify it.
 3. **Money is `Decimal`.** Never `Double`, not even briefly, not even for a sort key.
 4. **All TSV parsing degrades gracefully.** A malformed row is skipped and counted in
    `DaySales.skippedRows`. Unknown product types count toward proceeds, never toward downloads.
@@ -197,6 +201,37 @@ it. The claim came from a summarised read that conflated the "View ratings and r
 
 Reviews are **per app** — there is no portfolio endpoint — so a portfolio view is one request per
 app. That's why they're fetched when the section is opened and never from the poll timer.
+
+## Reply drafts
+
+The composer's **Draft** button uses Apple's on-device model through `FoundationModels`. No network
+request, no key. The spec is `docs/superpowers/specs/2026-09-16-ai-reply-drafts-design.md`.
+
+- **`VantageIntelligence` is the only target that imports `FoundationModels`**, inside
+  `#if canImport`, `@available(macOS 26, *)`. It's weak-linked, so 13–15 launch. `VantageCore`
+  stays Foundation-only, and `VantageCLI` must never depend on `VantageIntelligence`.
+- **A review is untrusted text.** It goes in the prompt, never the instructions — the model obeys
+  instructions over prompts. `DraftCleanup` rejects links, emails and phone numbers as the backstop
+  against a review that talks the model into advertising something.
+- **The review's language is detected in code, never left to the instruction alone.**
+  `AppleIntelligenceDrafter` runs `NLLanguageRecognizer` — on-device, like the model — over the
+  review's title and body and appends a line naming the language ("The review is written in German.
+  Write the reply in German."). It's there because "reply in the same language as the review" on its
+  own came back in English for German and Japanese reviews in evaluation. The recognizer reads
+  `request.languageSample`, never `instructions`, so review text still never reaches the
+  instructions — and not `request.prompt` either, whose English labels made a title-only
+  "とても便利" or a one-word "Bien" read as English.
+- **A draft is just text in the editor.** `ReplyDraft.assist` sits beside `stage` and has no
+  transition that touches it, so drafts reach the App Store by the same two steps as typing.
+- **A draft can still break a rule the instructions state.** The live evaluation produced a draft
+  promising a refund despite an explicit `DO NOT promise... refunds` line — the model is random, so
+  no cleanup check catches every such sentence. The publish confirmation, not `DraftCleanup`, is the
+  real safeguard: nothing reaches the App Store without the user reading it first.
+- **Prompt changes are measured, not eyeballed.**
+  `VANTAGE_LIVE_AI=1 swift test --filter LiveDraftEvalTests` runs thirteen synthetic reviews
+  through the real model. CI skips it: GitHub's macOS runners are VMs and report `deviceNotEligible`.
+- **Don't use the `apple.intelligence` SF Symbol.** It "may only be used to refer to Apple
+  Intelligence", and whether a feature built on it qualifies is unanswered. `sparkles` it is.
 
 ## Analytics
 

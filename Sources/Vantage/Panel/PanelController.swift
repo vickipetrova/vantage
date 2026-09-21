@@ -249,8 +249,8 @@ final class PanelController: NSObject {
         localMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in
-            guard let self, let panel = self.window else { return event }
-            if event.window !== panel { self.close() }
+            guard let self else { return event }
+            if !self.isInsidePanel(event.window) { self.close() }
             return event
         }
 
@@ -266,6 +266,30 @@ final class PanelController: NSObject {
         // hold. Closing is both simpler and right: the panel is a glance surface, and one that has
         // jumped to a different display is more confusing than one that isn't there.
         close()
+    }
+
+    /// Whether a click in `window` counts as a click *inside* the panel.
+    ///
+    /// Not simply "is it the panel": a control in the panel can put a window of its own on screen.
+    /// macOS 26's date field opens `_NSDatePickerOverlayPanel` — the calendar — and picking a date
+    /// in it is, to the person picking, a click inside the panel. Comparing against the panel alone
+    /// dismissed it the instant you tried to choose a date, so the custom range could be opened and
+    /// never used.
+    ///
+    /// The test is **ancestry**, because that overlay is attached as a child window of the panel,
+    /// which is how it follows the panel when it moves. Note what does *not* work: it is at the
+    /// panel's own window level, not above it, so "does it sit above us" answers this wrongly.
+    ///
+    /// Settings is a real window and no child of this one, so clicking it still dismisses the
+    /// panel; so does the status item, which is what keeps `toggle` above working.
+    private func isInsidePanel(_ window: NSWindow?) -> Bool {
+        guard let panel = self.window, let window else { return false }
+        var candidate: NSWindow? = window
+        while let next = candidate {
+            if next === panel { return true }
+            candidate = next.parent
+        }
+        return false
     }
 
     private func stopMonitoring() {

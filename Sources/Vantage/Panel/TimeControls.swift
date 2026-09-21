@@ -168,20 +168,39 @@ private struct ArrowButton: View {
 /// Inline rather than a popover on purpose: a popover is a separate window, and the panel closes
 /// on any click outside its own window — so the first click into a date field would dismiss the
 /// panel it belongs to.
+///
+/// **Neither field carries a date range**, though both obviously could. A `.field` date picker
+/// with a maximum validates every keystroke rather than the finished date, and a date is typed one
+/// component at a time: with the newest report in September, typing the month of `12/01/2025`
+/// proposes December *2026*, which is past the maximum, so AppKit snaps the whole field to the
+/// newest day and the rest of the typing lands on a date nobody chose. It is only possible to
+/// reach last December by editing the year first — an order nothing on screen tells you about.
+/// So the fields take any date, and `TimeWindow.custom` clamps the window to the cached days.
 private struct CustomRangeEditor: View {
     @ObservedObject var model: PanelModel
-    @State private var from = Date()
-    @State private var to = Date()
+    @State private var from: Date
+    @State private var to: Date
+
+    /// Starts from what's on screen, so adjusting one end is one edit rather than two.
+    ///
+    /// Seeded here rather than in `onAppear`: the row is built fresh every time it opens, and
+    /// without a range to clamp it, a bare `Date()` would show today — a day no report covers —
+    /// until `onAppear` landed.
+    init(model: PanelModel) {
+        _model = ObservedObject(wrappedValue: model)
+        _from = State(initialValue: model.window.startDate(newest: model.newestDay).calendarDate())
+        _to = State(initialValue: model.window.endDate(newest: model.newestDay).calendarDate())
+    }
 
     var body: some View {
         HStack(spacing: Theme.Space.tight) {
             Text("From")
                 .foregroundColor(.secondary)
-            DatePicker("From", selection: $from, in: ...newest, displayedComponents: .date)
+            DatePicker("From", selection: $from, displayedComponents: .date)
                 .labelsHidden()
             Text("to")
                 .foregroundColor(.secondary)
-            DatePicker("To", selection: $to, in: ...newest, displayedComponents: .date)
+            DatePicker("To", selection: $to, displayedComponents: .date)
                 .labelsHidden()
             Spacer(minLength: 0)
             Button("Apply") {
@@ -200,13 +219,5 @@ private struct CustomRangeEditor: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(0.05))
         )
-        .onAppear {
-            // Starts from what's on screen, so adjusting one end is one edit rather than two.
-            let window = model.window
-            from = window.startDate(newest: model.newestDay).calendarDate()
-            to = window.endDate(newest: model.newestDay).calendarDate()
-        }
     }
-
-    private var newest: Date { model.newestDay.calendarDate() }
 }

@@ -78,7 +78,7 @@ final class TimeWindowTests: XCTestCase {
 
     func testCustomCoversBothEndsInclusive() {
         let window = TimeWindow.custom(from: date("2026-03-01"), to: date("2026-03-31"),
-                                       newest: newest)
+                                       oldest: oldest, newest: newest)
         XCTAssertNil(window.preset)
         XCTAssertEqual(window.length, 31)
         XCTAssertEqual(window.startDate(newest: newest), date("2026-03-01"))
@@ -87,20 +87,42 @@ final class TimeWindowTests: XCTestCase {
 
     func testCustomAcceptsEndsInEitherOrder() {
         XCTAssertEqual(
-            TimeWindow.custom(from: date("2026-03-31"), to: date("2026-03-01"), newest: newest),
-            TimeWindow.custom(from: date("2026-03-01"), to: date("2026-03-31"), newest: newest))
+            TimeWindow.custom(from: date("2026-03-31"), to: date("2026-03-01"),
+                              oldest: oldest, newest: newest),
+            TimeWindow.custom(from: date("2026-03-01"), to: date("2026-03-31"),
+                              oldest: oldest, newest: newest))
     }
 
     func testACustomRangeReachingTodayIsLatest() {
         let window = TimeWindow.custom(from: date("2026-09-01"), to: date("2026-12-31"),
-                                       newest: newest)
+                                       oldest: oldest, newest: newest)
         XCTAssertTrue(window.isLatest)
-        XCTAssertEqual(window.length, 122)
+        XCTAssertEqual(window.length, 15, "1–15 Sep: the days asked for that exist, and no others")
+    }
+
+    /// The date fields are unbounded so they can be typed into — see `CustomRangeEditor`. What
+    /// keeps a window inside the cache is this, the same clamp `shifted` applies to a drag.
+    func testCustomClampsToTheDaysTheCacheHas() {
+        let window = TimeWindow.custom(from: date("2019-01-01"), to: date("2030-01-01"),
+                                       oldest: oldest, newest: newest)
+        XCTAssertEqual(window.startDate(newest: newest), oldest)
+        XCTAssertEqual(window.endDate(newest: newest), newest)
+        XCTAssertEqual(window.length, oldest.days(to: newest) + 1)
+    }
+
+    /// Asked for days that are all older than the cache, it answers with the oldest day it has
+    /// rather than a window of nothing.
+    func testACustomRangeEntirelyBeforeTheCacheLandsOnTheOldestDay() {
+        let window = TimeWindow.custom(from: date("2019-01-01"), to: date("2019-06-01"),
+                                       oldest: oldest, newest: newest)
+        XCTAssertEqual(window.startDate(newest: newest), oldest)
+        XCTAssertEqual(window.endDate(newest: newest), oldest)
+        XCTAssertEqual(window.length, 1)
     }
 
     func testACustomRangeStepsByItsOwnLength() {
         let window = TimeWindow.custom(from: date("2026-03-01"), to: date("2026-03-10"),
-                                       newest: newest)
+                                       oldest: oldest, newest: newest)
         let back = window.stepped(by: -1, oldest: oldest, newest: newest)
         XCTAssertEqual(back.startDate(newest: newest), date("2026-02-19"))
         XCTAssertEqual(back.endDate(newest: newest), date("2026-02-28"))

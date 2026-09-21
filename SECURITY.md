@@ -122,6 +122,13 @@ The first two carry the app's whole purpose. Two more exist only to draw an app'
 row, and the fifth only if you added a reviews key — v0.1 really did talk to two hosts and nothing
 else.
 
+**Drafting a reply adds no host.** The composer's Draft button runs Apple's on-device model on your
+Mac: the review's rating, title and text go to it, and nothing leaves the machine. Vantage uses
+`SystemLanguageModel` only, never Private Cloud Compute. Detecting the review's language, so the
+reply comes back in it, also runs on-device — `NLLanguageRecognizer`, not a request anywhere. A
+draft is ordinary text in the editor and is published only through the same confirmation as a typed
+reply.
+
 **Why a third and fourth host for something so small:** the App Store Connect API has no icon. There
 is no artwork field on `/v1/apps/{id}`, and no endpoint that returns one. The public storefront
 lookup is the only source, and it answers on `itunes.apple.com` with a URL pointing at

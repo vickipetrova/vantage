@@ -49,6 +49,10 @@ Then, per release:
 ```bash
 ./build.sh --dmg
 
+# Must print a LC_LOAD_WEAK_DYLIB match. Built with an SDK older than macOS 26, `canImport(FoundationModels)`
+# is false and the Draft button is silently compiled out — the build succeeds and nothing says so.
+otool -l build/Vantage.app/Contents/MacOS/Vantage | grep -A2 LC_LOAD_WEAK_DYLIB | grep FoundationModels
+
 SIGN_ID="Developer ID Application: Your Name (YOURTEAMID)"
 
 # Sign and notarize the .app first, so a copy dragged out of the DMG carries its own ticket.

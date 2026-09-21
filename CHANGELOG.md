@@ -8,6 +8,10 @@ All notable changes to Vantage are documented here. The format follows
 
 ### Added
 
+- **Draft review replies with Apple Intelligence**, on your Mac, with no network request and no
+  key. Undo and Try again; a draft never skips the publish confirmation. Needs macOS 26, Apple
+  silicon and Apple Intelligence on; the button is hidden elsewhere, and says so when Apple
+  Intelligence is off or still downloading.
 - **Engagement where you're already looking.** Impressions, page views and the share of impressions
   that became page views now sit on the Overview and on each app, with both available as chart
   series. The separate Analytics tab is gone, and so is its second metric picker.
@@ -56,7 +60,7 @@ All notable changes to Vantage are documented here. The format follows
 ### Changed
 
 - **Analytics refreshes in the background**, from the poll timer, wake and launch as well as opening
-  the panel, opening the section, and Refresh Now. Apple keeps daily instances for 35 days, so
+  the panel and Refresh Now. Apple keeps daily instances for 35 days, so
   history nobody collects is lost rather than late. `AnalyticsStore.maxAge` caps this at one to four
   fetches a day however often the timer fires; only Refresh Now bypasses it.
 
