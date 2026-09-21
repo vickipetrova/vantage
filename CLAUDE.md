@@ -205,7 +205,7 @@ app. That's why they're fetched when the section is opened and never from the po
 ## Reply drafts
 
 The composer's **Draft** button uses Apple's on-device model through `FoundationModels`. No network
-request, no key. The spec is `docs/superpowers/specs/2026-09-16-ai-reply-drafts-design.md`.
+request, no key.
 
 - **`VantageIntelligence` is the only target that imports `FoundationModels`**, inside
   `#if canImport`, `@available(macOS 26, *)`. It's weak-linked, so 13–15 launch. `VantageCore`
@@ -403,19 +403,20 @@ rather than in the view that displays it.
 
 ## Specs and plans
 
-`docs/superpowers/specs/` is committed. `docs/superpowers/plans/` is **not** — it's in `.gitignore`,
-and the files are kept locally.
+**`docs/superpowers/` is not committed.** The whole directory is in `.gitignore` and the files are
+kept locally. Specs and plans are working materials: imperative, dated, written against a codebase
+that then moves. Merged to `main` they become furniture — plausible, specific, stale, and sitting in
+a directory that looks like documentation, where the next reader, human or agent, takes them for a
+description of the present.
 
-A spec records why a decision was made, which the code cannot; `CLAUDE.md` cites one as the
-reference for reply drafts, and `REPORT_FORMAT.md` and `REVIEWS_API.md` earn their place the same
-way. An implementation plan is scaffolding — imperative steps for work that has since happened,
-naming files and functions that may since have been renamed. On a branch it's what lets the work be
-picked up days later. Merged to `main` it becomes furniture: plausible, specific, stale, and sitting
-in a directory that looks like documentation, where the next reader — human or agent — takes it for
-a description of the present.
+What survives from one is **rewritten into `CLAUDE.md` or `docs/` in its own words**, next to what it
+describes, where it gets updated when that changes. That's what `REPORT_FORMAT.md` and
+`REVIEWS_API.md` are, and why neither reads like a plan. A design worth keeping is worth a paragraph
+here; nothing in this repo should ever point at a path under `docs/superpowers/`, because for anyone
+who clones it, that path doesn't exist.
 
-Write plans where the skill puts them. Don't `git add` them, and don't remove the `.gitignore` entry
-to "fix" a plan not showing up in `git status`.
+Write specs and plans where the skill puts them. Don't `git add` them, and don't remove the
+`.gitignore` entry to "fix" them not showing up in `git status`.
 
 ## Releasing
 
