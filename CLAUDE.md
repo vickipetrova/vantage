@@ -401,6 +401,22 @@ So panel changes are verified by eye. Build, open, look — in both light and da
 automatable is everything in `VantageCore`, which is why the Overview's arithmetic lives there
 rather than in the view that displays it.
 
+## Specs and plans
+
+`docs/superpowers/specs/` is committed. `docs/superpowers/plans/` is **not** — it's in `.gitignore`,
+and the files are kept locally.
+
+A spec records why a decision was made, which the code cannot; `CLAUDE.md` cites one as the
+reference for reply drafts, and `REPORT_FORMAT.md` and `REVIEWS_API.md` earn their place the same
+way. An implementation plan is scaffolding — imperative steps for work that has since happened,
+naming files and functions that may since have been renamed. On a branch it's what lets the work be
+picked up days later. Merged to `main` it becomes furniture: plausible, specific, stale, and sitting
+in a directory that looks like documentation, where the next reader — human or agent — takes it for
+a description of the present.
+
+Write plans where the skill puts them. Don't `git add` them, and don't remove the `.gitignore` entry
+to "fix" a plan not showing up in `git status`.
+
 ## Releasing
 
 Bump `VERSION` in `build.sh`, add the entry to `CHANGELOG.md`, tag `vX.Y.Z`. CI fails the release if

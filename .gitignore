@@ -29,3 +29,9 @@ Application Support/
 
 # Local working materials, not part of the published repo
 VANTAGE_PLAN.md
+
+# Implementation plans are scaffolding: step-by-step instructions for work that has since happened,
+# written against a codebase that has since moved. They are useful on a branch and a liability on
+# main, where they age into confident wrong statements in a directory that looks like documentation.
+# The design specs beside them are kept and committed — those record why, which the code can't.
+docs/superpowers/plans/
