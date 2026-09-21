@@ -56,6 +56,9 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/ASCReviewsClient.swift` | Reads reviews. Read-only, by type |
 | `Sources/VantageCore/ReviewStore.swift` | TTL cache of reviews — **not** an archive |
 | `Sources/VantageCore/Prefs.swift` | UserDefaults-backed preferences |
+| `Sources/VantageCore/CredentialShape.swift` | What a typed credential looks like — advisory, never blocking |
+| `Sources/VantageCore/Setup.swift` | The setup steps, their copy, and the state machine over them |
+| `Sources/VantageCore/SetupGate.swift` | Which window opens at launch |
 | `Sources/VantageCore/MenuBarTitle.swift` | What the status item shows per style — an icon never hides an error |
 | `Sources/VantageCore/Format.swift` | Currency, unit counts, dates and spans |
 | `Sources/VantageCore/Money.swift` | Per-currency proceeds → one printable figure, honestly |
@@ -94,7 +97,11 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/Vantage/Panel/ChartPanSurface.swift` | Drag and two-finger swipe on the chart, as whole days |
 | `Sources/Vantage/Panel/ReviewsView.swift` | Reviews, portfolio-wide or per app |
 | `Sources/Vantage/Panel/ReplyComposer.swift` | The composer and the confirmation sheet |
-| `Sources/Vantage/SettingsWindow.swift` | Credentials and preferences, programmatic AppKit |
+| `Sources/Vantage/Settings/SettingsWindow.swift` | Credentials and preferences, programmatic AppKit |
+| `Sources/Vantage/Settings/PrivateKeyFile.swift` | Picking and reading a `.p8` — shared by both windows |
+| `Sources/Vantage/Setup/SetupWindow.swift` | The wizard's window — titled, and it takes focus |
+| `Sources/Vantage/Setup/SetupView.swift` | One step at a time |
+| `Sources/Vantage/Setup/SetupModel.swift` | The wizard's Keychain writes, picker, and one real request |
 | `Sources/Vantage/MainMenu.swift` | The Edit menu — without it ⌘V doesn't work anywhere |
 | `Sources/Vantage/Notifier.swift` | The morning notification |
 | `Sources/Vantage/LaunchAtLogin.swift` | `SMAppService` proxy |
@@ -312,21 +319,66 @@ The alternative is piping through `/usr/bin/gunzip`, which is less code and puts
 figures through a subprocess's stdout, where it can land in a crash log or be read by anything
 watching the process tree. Not worth the lines saved.
 
-## Known gap: onboarding
+## Onboarding
 
-`SettingsWindow` is a four-field form and it's the weakest part of v0.1 — it assumes the user knows
-what an Issuer ID is. Planned replacement, tracked as a `good first issue`: a step-by-step first-run
-walkthrough with one value per step, a screenshot of where each lives, an explicit "Sales and
-Reports role, not Admin" step, and credential errors that name which value looks wrong.
-**Test connection** is the first piece of that.
+First launch opens a wizard, not the Settings form. `SetupGate` decides between three outcomes —
+credentials (normal launch), the wizard, or Settings for someone who has done this before — and
+`AppDelegate` does what it says. `Prefs.setupCompleted` is written by exactly three things:
+pressing Skip, reaching the last screen, and launching with credentials already in the Keychain.
+That third one is the migration, and it is why an upgrading user never meets a walkthrough for
+something they finished a year ago.
 
-Two things here that were fixed the hard way and are easy to undo:
+It is keyed on an explicit action, never on having *seen* the window. The iOS "has seen
+onboarding" convention would be wrong here: closing the wizard halfway would set it, and the next
+launch would show a dead menu bar icon and no prompt, in an app that can do nothing without
+credentials. Abandoning the wizard must reopen it.
+
+**Validation warns and never blocks.** `CredentialShape` catches the mistake people actually make
+— a Key ID pasted into the Issuer ID field — and says so, with Continue still enabled.
+`Note.isAdvisory` is `true` for every case and a test asserts it over adversarial input, because a
+wizard that hard-blocks on this file's guesses about Apple's formats is an app nobody can set up
+the day Apple changes one.
+
+**Nothing reaches the Keychain until the save step**, so a wizard closed at step three leaves no
+trace.
+
+**A failed test doesn't always point back at a field.** `SalesError.likelyStep` maps a failure to
+the setup step most likely at fault, for the wizard's failure screen — but not every `403`: Apple's
+agreement-refusal 403 isn't fixed by remaking a key, an unsigned Paid Apps Agreement is unaffected
+by the key's role, so `likelyStep` returns `nil` for it and `errorDescription` already says where
+to go instead ("Sign it in App Store Connect › Business (Account Holder only)"). Sending that user
+to recreate a key would revoke a working one and fail again for the same reason.
+`SetupModel.canFixFromFailure` mirrors the same answer for the view: true only when the failure
+names a field worth returning to, so the failure screen offers "Go back and fix it" beside "Try
+again" only then — otherwise "Try again" stands alone, because `retryFromFailure()` is a
+deliberate no-op with no target step.
+
+**The panel's empty state asks the same question the launch path does.** `panelModel.onSettings`
+calls `AppDelegate.openSetupOrSettings()`, which asks `SetupGate.destination` again — so someone
+who never finished setup gets the wizard back, not the form. `StatusItemController.onSettings`
+still opens Settings directly from a right-click: asking for Settings by name is an explicit
+request, not a request for help.
+
+Three things here that were fixed the hard way and are easy to undo:
 
 - **⌘V needs `MainMenu.install()`.** An accessory app has no menu bar of its own, and AppKit
   dispatches keyboard shortcuts by matching main-menu items — with no Edit menu, `paste:` reaches
-  nothing and the fields silently refuse to paste. Nobody types an Issuer ID by hand.
+  nothing and the fields silently refuse to paste. Nobody types an Issuer ID by hand, in either
+  window.
 - **Every path out of the file picker reports something.** Cancelled, unreadable, wrong file. A
-  picker that appears to do nothing is indistinguishable from a broken button.
+  picker that appears to do nothing is indistinguishable from a broken button. `PrivateKeyFile` is
+  shared by both windows so there is one copy of those three messages.
+- **The wake observer is registered exactly once, in `applicationDidFinishLaunching`, above the
+  setup-gate switch.** `NSWorkspace`'s notification center doesn't deduplicate additions, and a
+  version of this registered `didWake` again on every `refresh(userInitiated:)` call — the count
+  doubled on every sleep/wake cycle, unbounded, by copy-paste from a launch path that already had
+  one. It has to stay above the switch: two of the switch's branches return early to open a window
+  instead of fetching, and a first-launch user who sets up credentials there would otherwise get no
+  wake refresh for the rest of the session.
+
+The two App Store Connect deep links in `SetupLinks` are the one part that rots without warning.
+A link that 404s is worse than no link — it teaches the user the instructions are wrong — so if
+either moves, delete it and let the step name the page in prose.
 
 ## The panel
 

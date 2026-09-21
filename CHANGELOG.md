@@ -36,6 +36,9 @@ All notable changes to Vantage are documented here. The format follows
 - **Delete data older than a date**, behind a confirmation that says what goes, that it can't be
   undone, and when those days will simply be downloaded again. Settings shows how much is cached
   and how much space it takes.
+- **A first-run setup walkthrough.** One value per step, with where to find it and why it matters,
+  instead of four blank fields. It catches the Issuer/Key ID swap, saves and tests in one move, and
+  offers the optional reviews key at the end rather than alongside.
 
 ### Fixed
 
@@ -56,6 +59,10 @@ All notable changes to Vantage are documented here. The format follows
 - **A report request Apple had stopped could never recover.** Apple stops generating for a request
   nobody reads and refuses to restart one — `POST`ing over it is answered `409`. The stopped request
   is now deleted and replaced, and says so rather than claiming to be a first report.
+- **The wake refresh could double on every sleep/wake cycle.** `didWake` was registered as an
+  `NSWorkspace` observer on every `refresh(userInitiated:)` call, on top of twice at launch;
+  `NotificationCenter` doesn't deduplicate, so each wake fired more refreshes than the last. It's
+  now registered exactly once, in `applicationDidFinishLaunching`.
 
 ### Changed
 
@@ -63,6 +70,8 @@ All notable changes to Vantage are documented here. The format follows
   the panel and Refresh Now. Apple keeps daily instances for 35 days, so
   history nobody collects is lost rather than late. `AnalyticsStore.maxAge` caps this at one to four
   fetches a day however often the timer fires; only Refresh Now bypasses it.
+- **Settings no longer repeats where each credential lives** — the walkthrough owns that. The
+  Keychain preference moved from App Store Connect to General.
 
 ## [0.2.0] — 2026-08-21
 
