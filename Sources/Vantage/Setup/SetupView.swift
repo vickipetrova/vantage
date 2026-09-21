@@ -176,7 +176,10 @@ struct SetupView: View {
         case .vendorNumber:
             Button("Save and test") { model.advance() }
                 .keyboardShortcut(.defaultAction)
-        default:
+        // No `default`: a new step should fail to compile here rather than silently inherit
+        // a Continue button that may be the wrong verb for it. `control` above answers the
+        // same question the same way.
+        case .createKey, .issuerID, .keyID, .privateKey, .reviewsIssuerID, .reviewsKeyID:
             Button("Continue") { model.advance() }
                 .keyboardShortcut(.defaultAction)
         }
