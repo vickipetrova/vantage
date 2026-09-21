@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
         // Not user-initiated: a wider window should fill in, not re-ask about assumed zeros.
         settingsWindow.onHistoryChanged = { [weak self] in self?.refresh(userInitiated: false) }
+        settingsWindow.onRunSetup = { [weak self] in self?.setupWindow.show() }
         settingsWindow.unpricedCurrencies = { [weak self] in self?.unpricedCurrencies() ?? [] }
         settingsWindow.testConnection = { [weak self] completion in
             self?.testConnection(completion) }
@@ -67,8 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rates = fx.cached()?.applying(manualRates: Prefs.manualRates)
         reloadCache()
 
-        // Registered before the credentials guard: a first-launch user who sets up credentials in
-        // the window this guard opens would otherwise get no wake refresh for the whole session.
+        // Registered before the switch below: two of its branches return early, opening a window
+        // instead of fetching, and a first-launch user who sets up credentials in whichever one
+        // opens would otherwise get no wake refresh for the whole session.
         //
         // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
         // window it slept through. Ask again the moment it wakes.

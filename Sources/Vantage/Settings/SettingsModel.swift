@@ -44,6 +44,8 @@ final class SettingsModel: ObservableObject {
     var onPreferencesChanged: (() -> Void)?
     var onReviewsKeyChanged: (() -> Void)?
     var onHistoryChanged: (() -> Void)?
+    /// Reopens the first-run walkthrough. The only route back to it once setup is marked done.
+    var onRunSetup: (() -> Void)?
     /// Makes one real request and reports whether it worked. Injected so this type stays a form and
     /// knows nothing about App Store Connect.
     var testConnection: ((@escaping (Result<Void, Error>) -> Void) -> Void)?
