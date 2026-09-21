@@ -35,7 +35,16 @@ final class SetupWindow: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        if window == nil { build() }
+        if window == nil {
+            build()
+        } else if model.flow.isComplete {
+            // Reopened after a finished run — "Run setup again…" is the only route back in, and
+            // without this it would redisplay the same Done screen, whose only control is Done,
+            // for the rest of the session. A window merely closed mid-flow skips this branch on
+            // purpose, so reopening it resumes where the user left off instead of discarding what
+            // they typed.
+            model.reset()
+        }
         // Setup takes focus, like Settings. It's a form, it needs the keyboard, and ⌘V comes from
         // `MainMenu.install()` — without which the fields silently refuse to paste.
         NSApp.activate(ignoringOtherApps: true)

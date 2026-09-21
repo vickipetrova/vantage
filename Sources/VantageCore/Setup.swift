@@ -162,9 +162,10 @@ public enum SetupStep: Int, CaseIterable, Equatable {
 
     /// The App Store Connect page this step is talking about.
     ///
-    /// Both URLs are verified by hand against a live account — see the note in
-    /// `SetupLinks`. A step whose link can't be confirmed names the page and links nothing:
-    /// a button landing on a 404 is worse than no button.
+    /// These URLs are a best reading of Apple's current paths, not yet confirmed against a live
+    /// account — see the note on `SetupLinks` for what that check requires and what to do if
+    /// either is ever found wrong. A step whose link can't be confirmed names the page and links
+    /// nothing: a button landing on a 404 is worse than no button.
     public var link: SetupLink? {
         switch self {
         case .createKey, .issuerID, .keyID, .reviewsIssuerID, .reviewsKeyID:
@@ -233,6 +234,22 @@ public struct SetupFlow: Equatable {
     /// The three optional ones. Never mixed with the four above — the separation is the point.
     public var reviewsValues: [KeychainStore.Key: String] {
         collected { $0.isReviews }
+    }
+
+    /// Which of the three reviews values are still missing, given whether the `.p8` was chosen.
+    ///
+    /// Answers from the staged values alone, never the Keychain — `CredentialVaultTests` explains
+    /// why `KeychainStore` itself can't be exercised in a test, and this is the one part of "did
+    /// the reviews key finish" that doesn't need it: `reviewsValues` already holds exactly what a
+    /// caller is about to write for the two text fields, trimmed and with the empty ones dropped,
+    /// and the private key never passes through here at all, so its presence is the one thing the
+    /// caller must say.
+    public func missingReviewsFields(privateKeyChosen: Bool) -> [KeychainStore.Key] {
+        var missing: [KeychainStore.Key] = []
+        if reviewsValues[.reviewsIssuerID] == nil { missing.append(.reviewsIssuerID) }
+        if reviewsValues[.reviewsKeyID] == nil { missing.append(.reviewsKeyID) }
+        if !privateKeyChosen { missing.append(.reviewsPrivateKey) }
+        return missing
     }
 
     private func collected(_ include: (KeychainStore.Key) -> Bool) -> [KeychainStore.Key: String] {

@@ -68,7 +68,13 @@ struct SetupView: View {
                     .textFieldStyle(.roundedBorder)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: 360)
-                    .onSubmit { model.advance() }
+                    // No `.onSubmit` here. The primary button below carries
+                    // `.keyboardShortcut(.defaultAction)`, so Return already reaches it — adding
+                    // `.onSubmit { model.advance() }` on the field as well fired both handlers on
+                    // one Return, advancing twice and skipping a step (the `.p8` picker included,
+                    // which has no text field of its own to catch the keystroke instead). Only
+                    // `.vendorNumber` happened to be safe, because `advance()`'s
+                    // `testState != .running` guard absorbed the second call; the others weren't.
                 if let message = model.note.message {
                     // A warning, never a block. Continue stays enabled beneath it.
                     Label(message, systemImage: "exclamationmark.triangle")
@@ -99,8 +105,18 @@ struct SetupView: View {
         case .saveAndTest:
             testStatus
 
-        case .createKey, .offerReviews, .done:
+        case .createKey, .offerReviews:
             EmptyView()
+
+        case .done:
+            if let message = model.reviewsKeyIncompleteMessage {
+                // Non-blocking, like everything else in the wizard — this only names what's
+                // still missing, in the same voice as the rest of the copy.
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

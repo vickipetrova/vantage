@@ -138,6 +138,23 @@ final class SetupModel: ObservableObject {
         NSWorkspace.shared.open(link.url)
     }
 
+    /// Fresh state for a re-opened wizard.
+    ///
+    /// `SetupWindow` calls this only when the previous run finished (`flow.isComplete`) — "Run
+    /// setup again…" is the only route back in once setup is marked done, and it must not land on
+    /// the same Done screen with Done as its only control. A wizard the user merely *closed*
+    /// mid-flow is a different case and must not call this: reopening it should resume where they
+    /// left off, not throw away what they typed.
+    func reset() {
+        flow = SetupFlow()
+        testState = .idle
+        pendingPrivateKey = nil
+        pendingReviewsPrivateKey = nil
+        keyFileStatus = nil
+        keyFileStatusIsError = false
+        reviewsMissingFields = []
+    }
+
     private func clearStepStatus() {
         keyFileStatus = nil
         keyFileStatusIsError = false
@@ -185,6 +202,11 @@ final class SetupModel: ObservableObject {
             switch result {
             case .success:
                 self.testState = .succeeded
+                // The raw `.p8` text has done its job — it's in the Keychain — and has no reason
+                // to keep living in process memory for the rest of the session. Not cleared until
+                // here: `keyFileLoaded` still reads `pendingPrivateKey` for the "Loaded" badge if
+                // the user goes Back from a *failure* to re-choose the file.
+                self.pendingPrivateKey = nil
                 // Straight on to the offer; a success screen with a Continue button is a click
                 // that asks nothing.
                 self.flow.advance()
@@ -219,9 +241,33 @@ final class SetupModel: ObservableObject {
         for (key, value) in flow.reviewsValues {
             KeychainStore.set(value, for: key)
         }
+        let privateKeyChosen = pendingReviewsPrivateKey != nil
         if let pendingReviewsPrivateKey {
             KeychainStore.set(pendingReviewsPrivateKey, for: .reviewsPrivateKey)
         }
+        // Same reasoning as the sales key: the raw text has been written, so it doesn't need to
+        // keep living in process memory for the rest of the session. The reviews step has no
+        // failure screen to return to, so there's no "Loaded" badge that still needs it.
+        pendingReviewsPrivateKey = nil
+        // "Save and finish" never blocks, so a value can still be missing after this — `flow`
+        // already knows which of the three it wrote, without touching the Keychain to find out.
+        reviewsMissingFields = flow.missingReviewsFields(privateKeyChosen: privateKeyChosen)
         onReviewsKeyChanged?()
+    }
+
+    /// Which of the three reviews values `saveReviewsKey()` couldn't write, if it has run.
+    /// Empty when the user declined the reviews key, and empty again after `reset()`.
+    @Published private(set) var reviewsMissingFields: [KeychainStore.Key] = []
+
+    /// True once the user has chosen to set up a reviews key but "Save and finish" landed on the
+    /// Done screen with one of the three values still missing — nothing else tells them.
+    var reviewsKeyIncomplete: Bool { !reviewsMissingFields.isEmpty }
+
+    /// The Done screen's extra line, naming what's still missing and where to finish it. `nil`
+    /// when there's nothing to say — the common case.
+    var reviewsKeyIncompleteMessage: String? {
+        guard reviewsKeyIncomplete else { return nil }
+        let names = reviewsMissingFields.map(SettingsModel.label).joined(separator: ", ")
+        return "The reviews key is missing \(names). Finish it in Settings › Reviews & Analytics."
     }
 }

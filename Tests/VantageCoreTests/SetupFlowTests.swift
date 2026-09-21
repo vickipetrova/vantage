@@ -110,6 +110,43 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertNil(flow.reviewsValues[.issuerID])
     }
 
+    // MARK: - Which reviews values are missing
+
+    /// All three present is nothing to report.
+    func testMissingReviewsFieldsIsEmptyWhenAllThreeArePresent() {
+        var flow = SetupFlow()
+        flow.setValue("iss", for: .reviewsIssuerID)
+        flow.setValue("kid", for: .reviewsKeyID)
+        XCTAssertEqual(flow.missingReviewsFields(privateKeyChosen: true), [])
+    }
+
+    /// The `.p8` is never staged in `values` — it lives only in `SetupModel` — so the caller must
+    /// say whether it was chosen. Left out here, it's the one missing field.
+    func testMissingReviewsFieldsNamesTheUnchosenPrivateKey() {
+        var flow = SetupFlow()
+        flow.setValue("iss", for: .reviewsIssuerID)
+        flow.setValue("kid", for: .reviewsKeyID)
+        XCTAssertEqual(flow.missingReviewsFields(privateKeyChosen: false), [.reviewsPrivateKey])
+    }
+
+    /// Nothing entered at all, and the picker never used: all three missing, in field order.
+    func testMissingReviewsFieldsNamesAllThreeWhenNothingWasEntered() {
+        let flow = SetupFlow()
+        XCTAssertEqual(flow.missingReviewsFields(privateKeyChosen: false),
+                       [.reviewsIssuerID, .reviewsKeyID, .reviewsPrivateKey])
+    }
+
+    /// Sales values never count toward the reviews three, even though both are staged on the same
+    /// `SetupFlow`.
+    func testMissingReviewsFieldsIgnoresSalesValues() {
+        var flow = SetupFlow()
+        flow.setValue("iss", for: .issuerID)
+        flow.setValue("kid", for: .keyID)
+        flow.setValue("85429106", for: .vendorNumber)
+        XCTAssertEqual(flow.missingReviewsFields(privateKeyChosen: false),
+                       [.reviewsIssuerID, .reviewsKeyID, .reviewsPrivateKey])
+    }
+
     /// The note for whatever the current step is asking for, so the view doesn't decide.
     func testNoteFollowsTheCurrentStep() {
         var flow = SetupFlow()
