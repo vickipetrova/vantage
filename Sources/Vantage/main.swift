@@ -44,7 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItemController.onWillShowMenu = { [weak self] in self?.panel.close() }
 
         panelModel.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
-        panelModel.onSettings = { [weak self] in self?.settingsWindow.show() }
+        // Whichever window can actually help. Someone who has never set up gets the walkthrough;
+        // someone who skipped it, or who pressed Forget credentials, gets the form back.
+        panelModel.onSettings = { [weak self] in self?.openSetupOrSettings() }
         panelModel.onMetricsChanged = { [weak self] in self?.render() }
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
         settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
@@ -106,6 +108,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func didWake() { refresh(userInitiated: false) }
+
+    /// The same decision the launch guard makes, for every other way into setup.
+    private func openSetupOrSettings() {
+        switch SetupGate.destination(hasCredentials: KeychainStore.hasCredentials,
+                                     setupCompleted: Prefs.setupCompleted) {
+        case .wizard: setupWindow.show()
+        case .normalLaunch, .settings: settingsWindow.show()
+        }
+    }
 
     private func preferencesChanged() {
         Notifier.requestAuthorizationIfNeeded()
