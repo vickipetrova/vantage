@@ -78,12 +78,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         render()
         refresh(userInitiated: false)
-
-
-        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
-        // window it slept through. Ask again the moment it wakes.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
     }
 
     @objc private func didWake() { refresh(userInitiated: false) }
@@ -145,14 +139,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Fetching
 
     private func refresh(userInitiated: Bool) {
-        // Registered before the credentials guard: a first-launch user who sets up credentials in
-        // the window this guard opens would otherwise get no wake refresh for the whole session.
-        //
-        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
-        // window it slept through. Ask again the moment it wakes.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
-
         guard KeychainStore.hasCredentials else {
             statusItemController.showNoCredentials()
             panelModel.showNoCredentials()
