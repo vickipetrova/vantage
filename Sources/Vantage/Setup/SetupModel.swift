@@ -52,6 +52,16 @@ final class SetupModel: ObservableObject {
     var canGoBack: Bool { flow.canGoBack && testState != .running }
     var link: SetupLink? { step.link }
 
+    /// Whether the failure on screen names a field worth returning to.
+    ///
+    /// False for a network drop, a rate limit, a bad report, and an agreement 403 — none of which
+    /// are fixed by editing a credential. `SalesError.likelyStep` decides; this is the view's
+    /// question about the same answer.
+    var canFixFromFailure: Bool {
+        if case .failed(_, let step) = testState { return step != nil }
+        return false
+    }
+
     /// "Step 3 of 5", or nothing on the three outcome screens.
     var progressLabel: String? {
         guard let progress = step.progress else { return nil }
@@ -79,6 +89,9 @@ final class SetupModel: ObservableObject {
     // MARK: - Moving
 
     func advance() {
+        // `back()` defends itself; so must this. A transition while a request is in flight leaves
+        // testState and flow.step disagreeing, and the completion then mutates a screen the user left.
+        guard testState != .running else { return }
         // Leaving the four sales values behind is the moment to write them.
         if step == .vendorNumber {
             flow.advance()
@@ -185,10 +198,15 @@ final class SetupModel: ObservableObject {
     }
 
     /// Back from a failure, to the field Apple's error implicates.
+    ///
+    /// Does nothing when the failure names no field — a network drop, a rate limit, a bad report,
+    /// or an agreement 403 aren't fixed by editing a credential, and sending the user to re-edit a
+    /// value that was already correct is exactly what `likelyStep` returning `nil` exists to
+    /// prevent. `canFixFromFailure` is how the view knows not to offer this button at all.
     func retryFromFailure() {
-        guard case .failed(_, let target) = testState else { return }
+        guard case .failed(_, let target) = testState, let target else { return }
         testState = .idle
-        flow.goTo(target ?? .vendorNumber)
+        flow.goTo(target)
     }
 
     /// Tries the same four values again, for a failure that wasn't about the values.
