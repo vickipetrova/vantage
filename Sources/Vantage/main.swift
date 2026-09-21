@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panelModel = PanelModel()
     private lazy var panel = PanelController(model: panelModel)
     private let settingsWindow = SettingsWindow()
+    private let setupWindow = SetupWindow()
     private let store = ReportStore()
     private let fx = FX()
     private let backfill: Backfill
@@ -53,6 +54,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.unpricedCurrencies = { [weak self] in self?.unpricedCurrencies() ?? [] }
         settingsWindow.testConnection = { [weak self] completion in
             self?.testConnection(completion) }
+        setupWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
+        setupWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
+        // Skip means "I'd rather paste them myself" — so hand over the form, don't just close.
+        setupWindow.onSkipped = { [weak self] in self?.settingsWindow.show() }
+        setupWindow.testConnection = { [weak self] completion in
+            self?.testConnection(completion) }
 
         Notifier.requestAuthorizationIfNeeded()
         // Whatever's on disk, so the first render isn't blank — with the user's own rates for any
@@ -68,14 +75,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
 
-        guard KeychainStore.hasCredentials else {
-            // First launch: nothing to show and nothing to fetch, so open the one window that
-            // fixes that rather than sitting there displaying a dash.
+        switch SetupGate.destination(hasCredentials: KeychainStore.hasCredentials,
+                                     setupCompleted: Prefs.setupCompleted) {
+        case .normalLaunch:
+            // Anyone launching with working credentials has already done this, whenever and
+            // however. Recording it here is the migration: a later Forget credentials then
+            // returns them to Settings rather than to step one of a walkthrough.
+            Prefs.setupCompleted = true
+
+        case .wizard:
+            // Nothing to show and nothing to fetch, and no evidence they've seen this before.
+            statusItemController.showNoCredentials()
+            panelModel.showNoCredentials()
+            setupWindow.show()
+            return
+
+        case .settings:
+            // They skipped the walkthrough, or they pressed Forget credentials. They know what an
+            // Issuer ID is; the form is faster for them than eleven screens.
             statusItemController.showNoCredentials()
             panelModel.showNoCredentials()
             settingsWindow.show()
             return
         }
+
         render()
         refresh(userInitiated: false)
     }
