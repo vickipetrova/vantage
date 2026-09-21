@@ -225,6 +225,27 @@ public enum SalesError: LocalizedError, Equatable {
     }
 }
 
+public extension SalesError {
+    /// The setup step most likely to be wrong, for the wizard's failure screen.
+    ///
+    /// `nil` means this isn't a credential problem — the wizard then offers "Try again" with no
+    /// Back, rather than sending the user to re-edit a value that was already correct.
+    var likelyStep: SetupStep? {
+        switch self {
+        // The key exists and is signed correctly; it simply isn't allowed. That's the role, which
+        // is chosen when the key is created — and can't be changed afterwards, only replaced.
+        case .forbidden:
+            return .createKey
+        // Issuer ID, Key ID and .p8 have to come from the same key. Apple's 401 body doesn't say
+        // which is wrong, so the first of the three is where to start looking.
+        case .unauthorized, .noCredentials:
+            return .issuerID
+        case .rateLimited, .network, .badReport, .http:
+            return nil
+        }
+    }
+}
+
 /// Apple's `ErrorResponse` body, reduced to something safe to put on screen.
 ///
 /// Apple's `detail` strings are about the request, not the caller — but they can quote a parameter

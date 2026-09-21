@@ -186,3 +186,33 @@ final class SetupFlowTests: XCTestCase {
         XCTAssertNil(SetupStep.done.field)
     }
 }
+
+/// Which step a failed connection test sends the user back to.
+///
+/// Optional on purpose. Three of these errors are not credential problems at all, and sending
+/// someone to re-edit an Issuer ID that was correct is worse than saying "try again".
+final class SalesErrorLikelyStepTests: XCTestCase {
+
+    /// A 403 is the role. The key itself is fine — it was made wrong, which is step one.
+    func testForbiddenPointsAtTheRole() {
+        XCTAssertEqual(SalesError.forbidden(detail: nil).likelyStep, .createKey)
+        XCTAssertEqual(SalesError.forbidden(detail: "Nope").likelyStep, .createKey)
+    }
+
+    /// A 401 means the three values don't agree with each other. Start at the first of them.
+    func testUnauthorizedPointsAtTheFirstOfTheThree() {
+        XCTAssertEqual(SalesError.unauthorized(detail: nil).likelyStep, .issuerID)
+    }
+
+    func testNoCredentialsPointsAtTheFirstField() {
+        XCTAssertEqual(SalesError.noCredentials.likelyStep, .issuerID)
+    }
+
+    /// Not credential problems. No field to send anyone to.
+    func testTransientAndUnknownFailuresPointNowhere() {
+        XCTAssertNil(SalesError.network.likelyStep)
+        XCTAssertNil(SalesError.rateLimited.likelyStep)
+        XCTAssertNil(SalesError.badReport.likelyStep)
+        XCTAssertNil(SalesError.http(500, detail: nil).likelyStep)
+    }
+}
