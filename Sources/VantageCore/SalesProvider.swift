@@ -232,9 +232,16 @@ public extension SalesError {
     /// Back, rather than sending the user to re-edit a value that was already correct.
     var likelyStep: SetupStep? {
         switch self {
-        // The key exists and is signed correctly; it simply isn't allowed. That's the role, which
-        // is chosen when the key is created — and can't be changed afterwards, only replaced.
-        case .forbidden:
+        // A 403 can mean two different things. The key might not have the right role — it was made
+        // wrong, and the only fix is a new key. But it can also mean the Paid Apps Agreement is
+        // unsigned. `errorDescription` already branches on this (checking for "agreement" in the
+        // detail) and directs the user to Business settings. A 403 user sent to recreate a key
+        // would revoke a working key and fail again, so an agreement-related 403 returns nil —
+        // the wizard offers Try again, and errorDescription says where to actually go.
+        case .forbidden(let detail):
+            if let detail, detail.range(of: "agreement", options: .caseInsensitive) != nil {
+                return nil
+            }
             return .createKey
         // Issuer ID, Key ID and .p8 have to come from the same key. Apple's 401 body doesn't say
         // which is wrong, so the first of the three is where to start looking.

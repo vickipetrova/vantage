@@ -199,6 +199,16 @@ final class SalesErrorLikelyStepTests: XCTestCase {
         XCTAssertEqual(SalesError.forbidden(detail: "Nope").likelyStep, .createKey)
     }
 
+    /// A 403 with an agreement problem is not about the key. errorDescription already directs the
+    /// user to Business settings to sign the agreement, and the wizard has no step that fixes it.
+    func testForbiddenWithAgreementProblemPointsNowhere() {
+        // Test lowercase and capitalized variants to ensure case-insensitive matching.
+        XCTAssertNil(SalesError.forbidden(detail: "Unsigned agreement").likelyStep)
+        XCTAssertNil(SalesError.forbidden(detail: "This Agreement needs signature").likelyStep)
+        // Verify that a 403 without "agreement" still points to createKey.
+        XCTAssertEqual(SalesError.forbidden(detail: "Invalid role").likelyStep, .createKey)
+    }
+
     /// A 401 means the three values don't agree with each other. Start at the first of them.
     func testUnauthorizedPointsAtTheFirstOfTheThree() {
         XCTAssertEqual(SalesError.unauthorized(detail: nil).likelyStep, .issuerID)
