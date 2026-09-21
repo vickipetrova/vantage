@@ -329,10 +329,16 @@ final class SettingsModel: ObservableObject {
     }
 
     func choosePrivateKey() {
-        guard let contents = readPrivateKey(into: &salesStatus) else { return }
-        pendingPrivateKey = contents
-        refreshStates()
-        salesStatus = Status(message: "Key loaded. Press Save to store it in your Keychain.")
+        switch PrivateKeyFile.choose() {
+        case .chosen(let contents):
+            pendingPrivateKey = contents
+            refreshStates()
+            salesStatus = Status(message: "Key loaded. Press Save to store it in your Keychain.")
+        case .cancelled:
+            salesStatus = Status()
+        case .failed(let message):
+            salesStatus = Status(message: message, isError: true)
+        }
     }
 
     // MARK: - The reviews key
@@ -368,10 +374,16 @@ final class SettingsModel: ObservableObject {
     }
 
     func chooseReviewsPrivateKey() {
-        guard let contents = readPrivateKey(into: &reviewsStatus) else { return }
-        pendingReviewsPrivateKey = contents
-        refreshStates()
-        reviewsStatus = Status(message: "Key loaded. Press Save reviews key to store it.")
+        switch PrivateKeyFile.choose() {
+        case .chosen(let contents):
+            pendingReviewsPrivateKey = contents
+            refreshStates()
+            reviewsStatus = Status(message: "Key loaded. Press Save reviews key to store it.")
+        case .cancelled:
+            reviewsStatus = Status()
+        case .failed(let message):
+            reviewsStatus = Status(message: message, isError: true)
+        }
     }
 
     // MARK: - Test connection
@@ -416,44 +428,6 @@ final class SettingsModel: ObservableObject {
         } else {
             launchStatus = Status()
         }
-    }
-
-    // MARK: - Reading a .p8
-
-    /// Picks and reads a `.p8`, reporting every way it can go wrong.
-    ///
-    /// Shared by both keys deliberately: the reviews picker must fail exactly as informatively as
-    /// the sales one, and a second copy is a second copy to forget to fix.
-    private func readPrivateKey(into status: inout Status) -> String? {
-        let panel = NSOpenPanel()
-        panel.title = "Choose your App Store Connect private key"
-        panel.message = "The AuthKey_XXXXXXXXXX.p8 file you downloaded from App Store Connect."
-        panel.allowsOtherFileTypes = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        // Deliberately no `allowedContentTypes`: `.p8` has no registered UTI, and constraining the
-        // panel is a good way to grey out the one file the user came here to pick.
-
-        guard panel.runModal() == .OK, let url = panel.url else {
-            status = Status()  // Cancelled. Not a failure, and not worth a message.
-            return nil
-        }
-        guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
-            // Never silent. macOS can refuse a read of ~/Downloads or ~/Desktop, and a picker that
-            // appears to do nothing is indistinguishable from a broken button.
-            status = Status(message: "Couldn't read that file. Try moving it somewhere else and "
-                            + "choosing again.", isError: true)
-            return nil
-        }
-        // Read once, here, and keep only the contents. The path is deliberately not retained: the
-        // file can be deleted or moved back into a password manager afterwards, and Vantage should
-        // never reach for it again.
-        guard contents.contains("PRIVATE KEY") else {
-            status = Status(message: "That file isn't a private key — look for "
-                            + "AuthKey_XXXXXXXXXX.p8.", isError: true)
-            return nil
-        }
-        return contents
     }
 
     static func label(_ key: KeychainStore.Key) -> String {
