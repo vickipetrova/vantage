@@ -20,6 +20,7 @@ public enum Prefs {
         static let rememberCredentials = "rememberCredentials"
         static let historyDays = "historyDays"
         static let menuBarStyle = "menuBarStyle"
+        static let setupCompleted = "setupCompleted"
     }
 
     /// What the menu bar renders money in. Defaults to the currency of the user's region, which is
@@ -131,6 +132,22 @@ public enum Prefs {
             return defaults.bool(forKey: Key.rememberCredentials)
         }
         set { defaults.set(newValue, forKey: Key.rememberCredentials) }
+    }
+
+    /// Whether the user has been through first-run setup, one way or another.
+    ///
+    /// Keyed on an explicit action, never on exposure. The iOS "has seen onboarding" convention
+    /// would be wrong here: closing the wizard halfway would set it, and the next launch would
+    /// show a dead menu bar icon with no prompt, in an app that can do nothing without
+    /// credentials. So only three things write it — pressing Skip, reaching the last screen, and
+    /// launching with credentials already in the Keychain. That third one is the migration, and
+    /// it's also what covers someone who fills the form in Settings and never opens the wizard.
+    ///
+    /// Defaults to false, which is correct for a fresh install and harmless for an upgrade: the
+    /// launch that reads it also sets it when credentials exist.
+    public static var setupCompleted: Bool {
+        get { defaults.bool(forKey: Key.setupCompleted) }
+        set { defaults.set(newValue, forKey: Key.setupCompleted) }
     }
 
     /// What the status item shows. Numbers by default — they're why Vantage lives in the menu bar —
