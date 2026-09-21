@@ -79,4 +79,43 @@ final class EngagementSummaryTests: XCTestCase {
                                               from: start, to: end)
         XCTAssertEqual(summary?.line, "0 impressions · 0 page views")
     }
+
+    // MARK: - Tiles
+
+    /// The headline draws one tile per figure. Deciding how many there are is Core's job, not the
+    /// view's — a view that decided it would be a calculation nothing can cover.
+    func testTilesCarryEachFigureWithItsOwnLabel() {
+        let days = [day(14, impressions: 1_000, pageViews: 45),
+                    day(15, impressions: 1_140, pageViews: 51)]
+        let summary = EngagementSummary.build(days: days, from: start, to: end)
+
+        XCTAssertEqual(summary?.tiles, [EngagementTile(label: "Impressions", value: "2,140"),
+                                        EngagementTile(label: "Page views", value: "96"),
+                                        EngagementTile(label: "Viewed", value: "4.5%")])
+    }
+
+    /// Without impressions the rate is undefined, so the tile is absent rather than showing a dash
+    /// or a zero. Two tiles is a complete answer; "0.0% viewed" is a false one.
+    func testThereIsNoConversionTileWhenNobodySawTheApp() {
+        let summary = EngagementSummary.build(days: [day(15, impressions: 0, pageViews: 0)],
+                                              from: start, to: end)
+
+        XCTAssertEqual(summary?.tiles, [EngagementTile(label: "Impressions", value: "0"),
+                                        EngagementTile(label: "Page views", value: "0")])
+    }
+
+    /// The tiles and the line are two renderings of one set of figures — the line survives as the
+    /// row's accessibility label, and the two drifting apart would make VoiceOver lie.
+    func testTilesAndLineAgreeOnEveryFigure() {
+        let days = [day(14, impressions: 1_000, pageViews: 45),
+                    day(15, impressions: 1_140, pageViews: 51)]
+        guard let summary = EngagementSummary.build(days: days, from: start, to: end) else {
+            return XCTFail("Expected a summary")
+        }
+
+        for tile in summary.tiles {
+            XCTAssertTrue(summary.line.contains(tile.value),
+                          "\(tile.value) is in the tiles but not the spoken line")
+        }
+    }
 }

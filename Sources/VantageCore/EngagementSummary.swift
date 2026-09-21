@@ -44,7 +44,21 @@ public struct EngagementSummary: Equatable, Sendable {
             daysCovered: Set(window.map(\.date)).count)
     }
 
-    /// The headline's engagement line.
+    /// One figure as the headline draws it: a number, and what it counts.
+    ///
+    /// The tiles are built here rather than in the view because how many there are is a decision —
+    /// a span nobody saw has no conversion, and that is two tiles rather than three.
+    public var tiles: [EngagementTile] {
+        var tiles = [EngagementTile(label: "Impressions", value: Fmt.downloads(impressions)),
+                     EngagementTile(label: "Page views", value: Fmt.downloads(pageViews))]
+        if let conversion {
+            tiles.append(EngagementTile(label: "Viewed", value: Fmt.percent(conversion)))
+        }
+        return tiles
+    }
+
+    /// The same figures as one sentence. Kept alongside `tiles` because it is what the tile row
+    /// reads out to VoiceOver — six label-and-number fragments in a row are not a sentence.
     public var line: String {
         var parts = ["\(Fmt.downloads(impressions)) impressions",
                      "\(Fmt.downloads(pageViews)) page views"]
@@ -52,5 +66,18 @@ public struct EngagementSummary: Equatable, Sendable {
             parts.append("\(Fmt.percent(conversion)) viewed")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+
+/// One engagement figure, labelled. `Equatable` so tests can assert the whole row at once.
+public struct EngagementTile: Equatable, Sendable {
+    /// Title case as written; the view is what decides to uppercase it.
+    public let label: String
+    public let value: String
+
+    public init(label: String, value: String) {
+        self.label = label
+        self.value = value
     }
 }
