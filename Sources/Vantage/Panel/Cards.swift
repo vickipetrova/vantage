@@ -88,6 +88,12 @@ struct AppRowView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .monospacedDigit()
+                    if let impressionsLabel = app.impressionsLabel {
+                        Text(impressionsLabel)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
                 }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -159,9 +165,9 @@ struct HeadlineCard: View {
             // Side by side, because the comparison people actually make is what customers paid
             // against what reached them — and two figures in a column read as a list, not a pair.
             HStack(alignment: .top, spacing: Theme.Space.section) {
-                Figure(value: headline.money.headline, label: "Proceeds", isPrimary: true)
+                Figure(value: headline.money.headline, label: "Proceeds", tier: .primary)
                 if let sales = headline.sales {
-                    Figure(value: sales.headline, label: "Sales", isPrimary: false)
+                    Figure(value: sales.headline, label: "Sales", tier: .secondary)
                 }
                 Spacer(minLength: 0)
             }
@@ -177,6 +183,26 @@ struct HeadlineCard: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+            }
+
+            if let engagement = headline.engagement {
+                // Tiles rather than a caption line. Folding the Analytics tab into the Overview
+                // demoted these from 16pt figures to grey 11pt prose, which is how three real
+                // numbers became easy to miss entirely.
+                HStack(alignment: .top, spacing: Theme.Space.section) {
+                    ForEach(engagement.tiles, id: \.label) { tile in
+                        Figure(value: tile.value, label: tile.label, tier: .tertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                // One sentence, not six fragments: VoiceOver reading "Impressions, 2,140, Page
+                // views, 96" loses that these describe each other.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(engagement.line)
+            } else if let note = headline.engagementNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             notes
@@ -204,16 +230,45 @@ struct HeadlineCard: View {
 
 /// One money figure with its name under it.
 private struct Figure: View {
+    /// How loudly a figure is stated. Three sizes, because the card shows three ranks of number:
+    /// what was earned, what was sold, and how many people got that far.
+    enum Tier {
+        case primary, secondary, tertiary
+
+        var size: CGFloat {
+            switch self {
+            case .primary: return 24
+            case .secondary: return 20
+            case .tertiary: return 16
+            }
+        }
+
+        var weight: Font.Weight {
+            switch self {
+            case .primary, .tertiary: return .semibold
+            case .secondary: return .regular
+            }
+        }
+
+        /// Engagement is `.primary` despite being the smallest: it spent a version as grey caption
+        /// text and the colour, more than the size, is what made it read as a footnote.
+        var color: Color {
+            switch self {
+            case .primary, .tertiary: return .primary
+            case .secondary: return .secondary
+            }
+        }
+    }
+
     let value: String
     let label: String
-    let isPrimary: Bool
+    var tier: Tier = .primary
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value)
-                .font(.system(size: isPrimary ? 24 : 20,
-                              weight: isPrimary ? .semibold : .regular))
-                .foregroundColor(isPrimary ? .primary : .secondary)
+                .font(.system(size: tier.size, weight: tier.weight))
+                .foregroundColor(tier.color)
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
@@ -240,7 +295,9 @@ struct TrendCard: View {
         let chart = model.window.chart(newest: model.newestDay)
         return Trend.series(days: model.days, series: model.trendSeries, length: chart.length,
                             endingAt: chart.end, rates: model.rates,
-                            displayCurrency: Prefs.displayCurrency, appleID: appleID)
+                            displayCurrency: Prefs.displayCurrency, appleID: appleID,
+                            engagement: appleID.map { model.engagement[$0] ?? [] }
+                                ?? model.portfolioEngagement)
     }
 
     var body: some View {

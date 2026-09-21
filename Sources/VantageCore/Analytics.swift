@@ -68,6 +68,33 @@ public enum AnalyticsRequestDecision: Equatable, Sendable {
     }
 }
 
+/// Which `ONE_TIME_SNAPSHOT` request an app's history comes from.
+///
+/// Separate from `AnalyticsRequestDecision` because the two access types answer different
+/// questions and must not interfere: `ONGOING` feeds the daily chart from its own creation
+/// onwards, and a snapshot is the only way to reach what came before it. Apple accepts one of
+/// each for the same app — verified against the live API on 2026-09-17.
+public enum AnalyticsSnapshotDecision: Equatable, Sendable {
+    /// Read this snapshot's instances.
+    case use(String)
+    /// No snapshot exists for this app yet.
+    case create
+
+    public static func decide(from requests: [AnalyticsRequest]) -> AnalyticsSnapshotDecision {
+        let snapshots = requests.filter { $0.accessType == "ONE_TIME_SNAPSHOT" }
+        // A stopped snapshot is a finished one, not a broken one: "one time" means it generates
+        // once and stops. Its instances stay readable until Apple expires them, and asking for a
+        // second request for the same app is how a `409 STATE_ERROR` dead end starts.
+        if let live = snapshots.first(where: { !$0.stoppedDueToInactivity }) {
+            return .use(live.id)
+        }
+        if let finished = snapshots.first {
+            return .use(finished.id)
+        }
+        return .create
+    }
+}
+
 public struct AnalyticsReport: Equatable, Sendable {
     public let id: String
     public let name: String
@@ -79,6 +106,26 @@ public struct AnalyticsInstance: Equatable, Sendable {
     public let granularity: String
     /// The day Apple processed this data — **not** the day the data describes.
     public let processingDate: String
+}
+
+/// What one history import actually managed to fetch.
+///
+/// The days **and** the instances they came from, because a history walk is allowed to stop
+/// part-way: a segments call that fails, or a download that never finishes, still leaves everything
+/// before it true. Returning only the days would let the caller assume the whole batch landed and
+/// record instances that were never read — and a snapshot instance recorded but not imported is a
+/// day that exists nowhere once Apple expires it 35 days later.
+///
+/// So the caller records `completedInstanceIDs` and nothing else. An instance is completed only
+/// when its segments were listed and every one of them downloaded.
+public struct AnalyticsHistorySlice: Equatable, Sendable {
+    public let days: [EngagementDay]
+    public let completedInstanceIDs: [String]
+
+    public init(days: [EngagementDay], completedInstanceIDs: [String]) {
+        self.days = days
+        self.completedInstanceIDs = completedInstanceIDs
+    }
 }
 
 public struct AnalyticsSegment: Equatable, Sendable {

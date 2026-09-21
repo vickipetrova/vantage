@@ -88,6 +88,10 @@ public struct OverviewModel: Equatable {
         /// Set when Apple published no report and the day was recorded as zero, which is a guess
         /// rather than an observation and has to say so.
         public let assumedZeroNote: String?
+        /// Engagement for the same days, when Apple has produced any.
+        public let engagement: EngagementSummary?
+        /// Why there are none, when there are none. Exactly one of these two is non-nil.
+        public let engagementNote: String?
     }
 
     public struct AppRow: Equatable, Identifiable {
@@ -96,6 +100,11 @@ public struct OverviewModel: Equatable {
         public let money: MoneyText
         public let units: Decimal
         public let unitsLabel: String
+        /// This app's impressions for the span. `nil` — never `0` — when Apple has none.
+        public let impressions: Decimal?
+        /// Ready to render — `nil` exactly when `impressions` is nil. A view renders strings, it
+        /// doesn't compose them.
+        public let impressionsLabel: String?
         public var id: String { appleID }
     }
 
@@ -126,14 +135,22 @@ public struct OverviewModel: Equatable {
                              metrics: Set<Metric>,
                              displayCurrency: String,
                              range: OverviewRange = .yesterday,
+                             engagement: [String: [EngagementDay]] = [:],
+                             hasEngagementSource: Bool = true,
                              now: Date = Date()) -> OverviewModel {
         build(days: days, rates: rates, error: error, metrics: metrics,
-              displayCurrency: displayCurrency, span: range.span, now: now)
+              displayCurrency: displayCurrency, span: range.span, engagement: engagement,
+              hasEngagementSource: hasEngagementSource, now: now)
     }
 
     /// - Parameters:
     ///   - days: newest first.
     ///   - span: what the headline and the app rows cover.
+    ///   - hasEngagementSource: whether engagement figures could arrive at all. False when there is
+    ///     no reviews key — analytics is readable only because that key exists — and then the
+    ///     headline says nothing about impressions rather than promising figures that are never
+    ///     coming. The card below already explains that a key is what's missing; two answers to the
+    ///     same question, one of them false, is worse than one.
     ///   - now: injected so the "fetched at" and "checked at" strings are testable.
     public static func build(days: [DaySales],
                              rates: FXRates?,
@@ -141,6 +158,8 @@ public struct OverviewModel: Equatable {
                              metrics: Set<Metric>,
                              displayCurrency: String,
                              span: Span,
+                             engagement: [String: [EngagementDay]] = [:],
+                             hasEngagementSource: Bool = true,
                              now: Date = Date()) -> OverviewModel {
         let days = days.sorted { $0.date > $1.date }
 
@@ -170,6 +189,11 @@ public struct OverviewModel: Equatable {
         let units = Metric.units(in: window, metrics: metrics)
         let total = money(sum(window))
 
+        // Engagement covers the same days as the money above it. Summed across apps for the
+        // portfolio; `AppDetailModel` hands in one app's entry and gets that app's figures.
+        let engagementDays = engagement.values.flatMap { $0 }
+        let engagementSummary = EngagementSummary.build(days: engagementDays, from: start, to: end)
+
         // Only if some day in the range was actually read for it. A range of days parsed before
         // gross existed has no gross, and a zero there would read as "nobody bought anything".
         let knowsSales = window.contains { $0.parserVersion >= 1 }
@@ -189,15 +213,24 @@ public struct OverviewModel: Equatable {
             // Only meaningful for a single day. Across a week, one guessed day among seven doesn't
             // make the total a guess, and saying so would overstate it.
             assumedZeroNote: span.length == 1 && window.first?.origin == .assumedZero
-                ? "No report published — recorded as zero" : nil)
+                ? "No report published — recorded as zero" : nil,
+            engagement: engagementSummary,
+            engagementNote: engagementSummary == nil && hasEngagementSource
+                ? "Impressions not available yet for these days" : nil)
 
         // MARK: Apps
 
         var apps: [AppRow] = []
         for app in aggregate(window, metrics: metrics) {
+            let rowEngagement = EngagementSummary.build(days: engagement[app.appleID] ?? [],
+                                                        from: start, to: end)
             apps.append(AppRow(appleID: app.appleID, title: app.title,
                                money: money(app.proceeds), units: app.units,
-                               unitsLabel: Fmt.downloadsWithArrow(app.units)))
+                               unitsLabel: Fmt.downloadsWithArrow(app.units),
+                               impressions: rowEngagement?.impressions,
+                               impressionsLabel: rowEngagement.map {
+                                   "\(Fmt.downloads($0.impressions)) impressions"
+                               }))
         }
         // Ranked by money only when the figures are actually comparable. Without a usable rate
         // table each row's `sortKey` is an amount in whichever currency it led with, so sorting on
@@ -231,6 +264,10 @@ public struct OverviewModel: Equatable {
             footnotes.append("≈ converted at ECB rates for \(rates.published)")
         } else {
             footnotes.append("Exchange rates unavailable — showing one currency")
+        }
+
+        if engagementSummary != nil {
+            footnotes.append("Apple keeps analytics for 35 days — older days are Vantage's own copy.")
         }
 
         // MARK: Warnings

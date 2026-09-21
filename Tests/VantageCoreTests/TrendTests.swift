@@ -256,4 +256,59 @@ final class TrendTests: XCTestCase {
         XCTAssertNil(TrendSeries(rawValue: "metric:somethingApplAdded"))
         XCTAssertNil(TrendSeries(rawValue: "nonsense"))
     }
+
+    // MARK: - Engagement series
+
+    private func engagementDay(_ day: Int, impressions: Decimal, pageViews: Decimal) -> EngagementDay {
+        EngagementDay(date: ReportDate(year: 2026, month: 9, day: day),
+                      impressions: impressions, pageViews: pageViews)
+    }
+
+    func testImpressionsAndPageViewsDrawFromTheEngagementDays() {
+        let engagement = [engagementDay(15, impressions: 100, pageViews: 10),
+                          engagementDay(16, impressions: 300, pageViews: 20)]
+        let end = ReportDate(year: 2026, month: 9, day: 16)
+
+        let impressions = Trend.series(days: [], series: .impressions, length: 2, endingAt: end,
+                                       rates: nil, displayCurrency: "USD", engagement: engagement)
+        XCTAssertEqual(impressions.points.map(\.value), [100, 300])
+
+        let pageViews = Trend.series(days: [], series: .pageViews, length: 2, endingAt: end,
+                                     rates: nil, displayCurrency: "USD", engagement: engagement)
+        XCTAssertEqual(pageViews.points.map(\.value), [10, 20])
+    }
+
+    /// Apple finalises a day about two days later. A day it hasn't produced is absent, and drawing
+    /// it as zero invents a cliff.
+    func testADayApplehasNotFinalisedIsAGapNotAZero() {
+        let engagement = [engagementDay(16, impressions: 300, pageViews: 20)]
+        let end = ReportDate(year: 2026, month: 9, day: 16)
+        let data = Trend.series(days: [], series: .impressions, length: 3, endingAt: end,
+                                rates: nil, displayCurrency: "USD", engagement: engagement)
+        XCTAssertEqual(data.points.map(\.value), [nil, nil, 300])
+    }
+
+    /// Engagement isn't money, so it draws with no rate table — the chart must not report
+    /// "Exchange rates unavailable" for a line that never needed them.
+    func testEngagementDrawsWithoutARateTable() {
+        let engagement = [engagementDay(16, impressions: 300, pageViews: 20)]
+        let data = Trend.series(days: [], series: .impressions, length: 1,
+                                endingAt: ReportDate(year: 2026, month: 9, day: 16),
+                                rates: nil, displayCurrency: "USD", engagement: engagement)
+        XCTAssertNil(data.unavailable)
+    }
+
+    func testTheNewSeriesAreOfferedLastAndRoundTripThroughStorage() {
+        XCTAssertEqual(TrendSeries.displayOrder.suffix(2), [.impressions, .pageViews])
+        XCTAssertEqual(TrendSeries(rawValue: TrendSeries.impressions.rawValue), .impressions)
+        XCTAssertEqual(TrendSeries(rawValue: TrendSeries.pageViews.rawValue), .pageViews)
+        XCTAssertEqual(TrendSeries.impressions.label, "Impressions")
+        XCTAssertEqual(TrendSeries.pageViews.label, "Page views")
+    }
+
+    /// A stored choice from a build that didn't have these cases must still decode to something.
+    func testAnUnknownStoredSeriesIsStillRejected() {
+        XCTAssertNil(TrendSeries(rawValue: "impresions"))
+        XCTAssertNil(TrendSeries(rawValue: "metric:nonsense"))
+    }
 }

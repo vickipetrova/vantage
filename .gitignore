@@ -29,3 +29,9 @@ Application Support/
 
 # Local working materials, not part of the published repo
 VANTAGE_PLAN.md
+
+# Design specs and implementation plans. Working materials: useful while the work is in flight,
+# a liability on main, where they age into confident wrong statements in a directory that looks
+# like documentation. Anything from one worth keeping gets written into CLAUDE.md or docs/ in its
+# own words, where it sits next to what it describes and gets updated with it.
+docs/superpowers/

@@ -327,14 +327,17 @@ final class PanelModel: ObservableObject {
     @Published private(set) var engagement: [String: [EngagementDay]] = [:]
     @Published private(set) var analyticsError: Error?
     @Published private(set) var isLoadingAnalytics = false
-    @Published private(set) var engagementMetric: EngagementMetric = .impressions
 
     private let analyticsProvider: AnalyticsProvider = ASCAnalyticsClient()
     private let analyticsStore = AnalyticsStore()
 
-    func select(_ metric: EngagementMetric) {
-        guard metric != engagementMetric else { return }
-        engagementMetric = metric
+    /// Why there are no engagement figures, or nil when there's nothing to say. Decided in Core —
+    /// see `EngagementState`.
+    var engagementState: EngagementNote? {
+        EngagementState.note(hasKey: hasReviewsKey,
+                             isLoading: isLoadingAnalytics,
+                             hasDays: !portfolioEngagement.isEmpty,
+                             error: analyticsError)
     }
 
     /// Every app's engagement days, summed by date.
@@ -345,7 +348,7 @@ final class PanelModel: ObservableObject {
     /// Loads engagement, cache first and the network only where the cache is stale.
     ///
     /// Called from every refresh — launch, wake and the poll timer included — plus opening the
-    /// panel, opening the Analytics section, and Refresh Now.
+    /// panel and Refresh Now.
     ///
     /// Firing in the background is the point: a chart nobody visits still has to keep up, and Apple
     /// deletes daily instances after 35 days, so history that isn't collected is lost rather than
@@ -373,11 +376,37 @@ final class PanelModel: ObservableObject {
 
         isLoadingAnalytics = true
         analyticsError = nil
-        let deadline = DispatchTime.now() + .seconds(120 + outstanding.count * 60)
+        // **The chain clears this flag; the timer below only catches the case where it never
+        // does.** `fetchAnalytics` sets it false when it runs off the end of the list, and that is
+        // the normal outcome. The timer is a backstop against a provider completion that never
+        // arrives, which would otherwise latch the flag and block every later load for the life of
+        // the process.
+        //
+        // So it has to outlast the work rather than the typical run. Sized for the newest-days walk
+        // alone it fired *during* a first history import — up to `historyInstanceCap` snapshot
+        // instances per app, sequentially — and the `guard !isLoadingAnalytics` above then let a
+        // second chain start over the same apps while the first was still going.
+        let deadline = DispatchTime.now() + .seconds(watchdogSeconds(for: outstanding))
         DispatchQueue.main.asyncAfter(deadline: deadline) { [weak self] in
             self?.isLoadingAnalytics = false
         }
         fetchAnalytics(outstanding, index: 0)
+    }
+
+    /// A segments call (30s timeout) plus its downloads (60s each), per snapshot instance. Not a
+    /// measurement — an upper bound, which is the only useful kind of number for a backstop.
+    private static let secondsPerHistoryInstance = 90
+
+    /// How long to wait before assuming the chain died, given the work actually outstanding.
+    ///
+    /// An app that still owes its history costs far more than one that doesn't, so they're counted
+    /// separately: a fixed per-app figure is what made the timer a normal outcome instead of a
+    /// backstop.
+    private func watchdogSeconds(for outstanding: [String]) -> Int {
+        let daily = outstanding.count * 60
+        let history = outstanding.filter { analyticsStore.needsHistory($0) }.count
+            * AnalyticsStore.historyInstanceCap * Self.secondsPerHistoryInstance
+        return 120 + daily + history
     }
 
     private func fetchAnalytics(_ appleIDs: [String], index: Int) {
@@ -406,8 +435,66 @@ final class PanelModel: ObservableObject {
                         return
                     }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    self.fetchAnalytics(appleIDs, index: index + 1)
+                self.importHistory(for: appleID) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        self.fetchAnalytics(appleIDs, index: index + 1)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Imports whatever history Apple still holds for one app, once.
+    ///
+    /// An `ONGOING` report request only produces days from its own creation onwards, so a new
+    /// install's chart would start the day it was set up and fill in over a month. A
+    /// `ONE_TIME_SNAPSHOT` covers what came before, and `AnalyticsStore` merges it into the same
+    /// file — so this runs until every snapshot instance has been imported and then never again.
+    ///
+    /// Bounded and silent on purpose: a capped number of instances per refresh, and any failure
+    /// (no Admin key to create the snapshot, nothing generated yet, an HTTP error) leaves the daily
+    /// analytics exactly as they were. Nothing here is worth an error in the panel.
+    private func importHistory(for appleID: String, then next: @escaping () -> Void) {
+        guard analyticsStore.needsHistory(appleID) else {
+            next()
+            return
+        }
+        analyticsProvider.snapshotInstances(forApp: appleID) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, case .success(let available) = result, !available.isEmpty else {
+                    next()
+                    return
+                }
+                let pending = self.analyticsStore.pendingHistoryInstances(available, for: appleID)
+                guard !pending.isEmpty else {
+                    self.analyticsStore.markHistoryImported(appleID)
+                    next()
+                    return
+                }
+                self.analyticsProvider.history(instanceIDs: pending) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self else {
+                            next()
+                            return
+                        }
+                        if case .success(let slice) = result {
+                            self.engagement[appleID] =
+                                self.analyticsStore.merge(slice.days, for: appleID)
+                            // What the client says it finished, never what was asked for. A walk
+                            // that stops half way still returns `.success`, and recording the whole
+                            // batch would abandon every instance it never reached — permanently,
+                            // once Apple expires them 35 days later.
+                            self.analyticsStore.recordHistoryInstances(slice.completedInstanceIDs,
+                                                                       for: appleID)
+                            // Done only when nothing is left: a capped run leaves the rest for the
+                            // next refresh.
+                            if self.analyticsStore
+                                .pendingHistoryInstances(available, for: appleID).isEmpty {
+                                self.analyticsStore.markHistoryImported(appleID)
+                            }
+                        }
+                        next()
+                    }
                 }
             }
         }

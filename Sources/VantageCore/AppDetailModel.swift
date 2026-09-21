@@ -22,9 +22,12 @@ public struct AppDetailModel: Equatable {
                              metrics: Set<Metric>,
                              displayCurrency: String,
                              range: OverviewRange = .yesterday,
+                             engagement: [String: [EngagementDay]] = [:],
+                             hasEngagementSource: Bool = true,
                              now: Date = Date()) -> AppDetailModel {
         build(appleID: appleID, days: days, rates: rates, error: error, metrics: metrics,
-              displayCurrency: displayCurrency, span: range.span, now: now)
+              displayCurrency: displayCurrency, span: range.span, engagement: engagement,
+              hasEngagementSource: hasEngagementSource, now: now)
     }
 
     /// Any span — what the panel's time navigation hands in.
@@ -35,6 +38,8 @@ public struct AppDetailModel: Equatable {
                              metrics: Set<Metric>,
                              displayCurrency: String,
                              span: OverviewModel.Span,
+                             engagement: [String: [EngagementDay]] = [:],
+                             hasEngagementSource: Bool = true,
                              now: Date = Date()) -> AppDetailModel {
         let days = days.sorted { $0.date > $1.date }
         // Newest first, so the first title found is the most recent name Apple used for it.
@@ -44,7 +49,9 @@ public struct AppDetailModel: Equatable {
 
         let summary = OverviewModel.build(days: narrow(days, to: appleID), rates: rates,
                                           error: error, metrics: metrics,
-                                          displayCurrency: displayCurrency, span: span, now: now)
+                                          displayCurrency: displayCurrency, span: span,
+                                          engagement: engagement[appleID].map { [appleID: $0] } ?? [:],
+                                          hasEngagementSource: hasEngagementSource, now: now)
 
         return AppDetailModel(
             appleID: appleID,

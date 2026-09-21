@@ -469,4 +469,110 @@ final class OverviewModelTests: XCTestCase {
         }
     }
 
+    // MARK: - Engagement
+
+    private func engagementDay(_ date: ReportDate, impressions: Decimal,
+                               pageViews: Decimal) -> EngagementDay {
+        EngagementDay(date: date, impressions: impressions, pageViews: pageViews)
+    }
+
+    func testTheHeadlineCarriesEngagementForTheSpan() {
+        let day = day(yesterday, units: 10, apps: [app("1", "Mine", ["USD": 5]),
+                                                    app("2", "Theirs", ["USD": 5])])
+        let engagement = ["1": [engagementDay(yesterday, impressions: 1_000, pageViews: 45)],
+                          "2": [engagementDay(yesterday, impressions: 1_140, pageViews: 51)]]
+        let model = OverviewModel.build(days: [day], rates: nil, error: nil, metrics: [.installs],
+                                        displayCurrency: "USD",
+                                        span: OverviewModel.Span(title: "Yesterday", length: 1),
+                                        engagement: engagement, now: now)
+
+        XCTAssertEqual(model.headline?.engagement?.impressions, 2_140)
+        XCTAssertEqual(model.headline?.engagement?.pageViews, 96)
+        XCTAssertNil(model.headline?.engagementNote, "Figures and a note are mutually exclusive")
+    }
+
+    /// Apple finalises a day about two days after it, so the newest sales day usually has no
+    /// analytics. Saying so beats a blank space or a zero.
+    func testASpanWithNoEngagementSaysSoInsteadOfShowingZeros() {
+        let model = OverviewModel.build(
+            days: [day(yesterday, units: 10)], rates: nil, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: ["1": [engagementDay(yesterday.adding(days: -30), impressions: 5,
+                                             pageViews: 1)]],
+            now: now)
+
+        XCTAssertNil(model.headline?.engagement)
+        XCTAssertEqual(model.headline?.engagementNote,
+                       "Impressions not available yet for these days")
+    }
+
+    /// "Not available **yet**" promises figures that are coming. With no reviews key nothing is
+    /// coming, and the card below already explains that a key is what's missing — two different
+    /// answers to the same question, one of them false.
+    func testWithNoEngagementSourceTheHeadlineSaysNothingAboutImpressions() {
+        let model = OverviewModel.build(
+            days: [day(yesterday, units: 10)], rates: nil, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            hasEngagementSource: false, now: now)
+
+        XCTAssertNil(model.headline?.engagement)
+        XCTAssertNil(model.headline?.engagementNote,
+                     "The card explains the missing key; the headline must not contradict it")
+    }
+
+    /// The same span, with a key: the note is the right answer again.
+    func testWithAnEngagementSourceTheHeadlineStillSaysTheyArePending() {
+        let model = OverviewModel.build(
+            days: [day(yesterday, units: 10)], rates: nil, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            hasEngagementSource: true, now: now)
+
+        XCTAssertEqual(model.headline?.engagementNote,
+                       "Impressions not available yet for these days")
+    }
+
+    func testTheRetentionFootnoteAppearsOnlyWithEngagementFigures() {
+        let note = "Apple keeps analytics for 35 days — older days are Vantage's own copy."
+
+        let withEngagement = OverviewModel.build(
+            days: [day(yesterday, units: 10)], rates: nil, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: ["1": [engagementDay(yesterday, impressions: 10, pageViews: 1)]], now: now)
+        XCTAssertTrue(withEngagement.footnotes.contains(note))
+
+        let without = OverviewModel.build(
+            days: [day(yesterday, units: 10)], rates: nil, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            now: now)
+        XCTAssertFalse(without.footnotes.contains(note))
+    }
+
+    func testAppRowsCarryTheirOwnImpressions() {
+        let day = day(yesterday, units: 2, apps: [app("1", "Mine", ["USD": 5]),
+                                                   app("2", "Theirs", ["USD": 5])])
+        let model = OverviewModel.build(
+            days: [day], rates: nil, error: nil, metrics: [.installs], displayCurrency: "USD",
+            span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: ["1": [engagementDay(yesterday, impressions: 340, pageViews: 12)]], now: now)
+
+        XCTAssertEqual(model.apps.first { $0.appleID == "1" }?.impressions, 340)
+        XCTAssertNil(model.apps.first { $0.appleID == "2" }?.impressions,
+                     "An app with no analytics shows nothing, never 0")
+    }
+
+    /// `AppRowView` renders this string rather than composing it — a view renders strings, it
+    /// doesn't build them.
+    func testAppRowsCarryAReadyMadeImpressionsLabel() {
+        let day = day(yesterday, units: 2, apps: [app("1", "Mine", ["USD": 5]),
+                                                   app("2", "Theirs", ["USD": 5])])
+        let model = OverviewModel.build(
+            days: [day], rates: nil, error: nil, metrics: [.installs], displayCurrency: "USD",
+            span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: ["1": [engagementDay(yesterday, impressions: 340, pageViews: 12)]], now: now)
+
+        XCTAssertEqual(model.apps.first { $0.appleID == "1" }?.impressionsLabel, "340 impressions")
+        XCTAssertNil(model.apps.first { $0.appleID == "2" }?.impressionsLabel,
+                     "An app with no analytics shows nothing, never 0")
+    }
+
 }

@@ -57,8 +57,9 @@ in their own currency rather than folded into a total that would look complete a
 
 The only other requests are for app icons, which the App Store Connect API doesn't provide — those
 go to Apple's public storefront lookup and send nothing but the numeric Apple ID of an app you
-publish — and, if you open Analytics, the report files themselves, which Apple serves as pre-signed
-Amazon S3 links. See [SECURITY.md](SECURITY.md) for all five hosts and what each one carries.
+publish — and, for App Store impressions and page views, the report files themselves, which Apple
+serves as pre-signed Amazon S3 links. See [SECURITY.md](SECURITY.md) for all five hosts and what
+each one carries.
 
 Your numbers are never sent anywhere. There is no server behind this app.
 
@@ -102,10 +103,13 @@ what a leaked key could do — so Vantage asks for a separate key with the **App
 stores it separately. Add it under **Settings › Reviews key**; leave it blank and Vantage behaves
 exactly as it did without it.
 
-The same key powers **Analytics** — App Store impressions, page views and the rate between them,
-which no sales report contains. Apple requires an Admin key to *start* generating an analytics
-report and then takes 24 to 48 hours to produce the first one; Vantage says so rather than looking
-broken. See [docs/ANALYTICS_API.md](docs/ANALYTICS_API.md).
+Impressions, page views and the share of impressions that became page views appear on the Overview
+alongside sales, and per app when you click into one. The chart draws either of them: pick
+**Impressions** or **Page views** from the series menu. Analytics needs the same key as Reviews.
+
+Apple requires an Admin key to *start* generating an analytics report and then takes 24 to 48 hours
+to produce the first one; Vantage says so rather than looking broken. See
+[docs/ANALYTICS_API.md](docs/ANALYTICS_API.md).
 
 Vantage's reviews key only reads unless you explicitly switch replying on, and replying needs an
 Admin key in practice — a much bigger thing to hand an app. See

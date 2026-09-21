@@ -42,6 +42,13 @@ public struct AnalyticsStore {
     struct Entry: Codable {
         let days: [EngagementDay]
         let fetchedAt: Date
+        /// Snapshot instances already imported, so a history import resumes rather than restarts.
+        /// Absent in files written before history import existed, which is what makes those
+        /// installs ask for their history on the next refresh.
+        var historyInstanceIDs: [String]?
+        /// Set once every snapshot instance has been imported. Nothing re-reads a snapshot after
+        /// this: it is generated once, and Apple expires its instances.
+        var historyImportedAt: Date?
     }
 
     /// Validated, not sanitized — the same rule every other store in this app follows.
@@ -67,8 +74,8 @@ public struct AnalyticsStore {
 
     /// How many of the newest daily instances this app needs, given how long it's been.
     ///
-    /// **This used to be a fixed 7**, which quietly meant that not opening the Analytics section
-    /// for a fortnight left days 8–14 missing forever: every later refresh asked for the newest
+    /// **This used to be a fixed 7**, which quietly meant that not opening Vantage for a fortnight
+    /// left days 8–14 missing forever: every later refresh asked for the newest
     /// seven again, and nothing ever went back for the rest. Apple still had them — it keeps
     /// instances for 35 days — so the data was reachable the whole time and simply never requested.
     ///
@@ -82,6 +89,59 @@ public struct AnalyticsStore {
         // the partial one either way.
         let missed = max(0, Int(elapsed / (24 * 60 * 60)))
         return min(missed + Self.revisionOverlap, Self.retentionInstances)
+    }
+
+    // MARK: - History, imported once per app
+
+    /// How many snapshot instances one refresh imports.
+    ///
+    /// A snapshot can hold years, and each instance costs a segments call plus a download. A
+    /// bounded bite per refresh keeps a first run from turning into hundreds of requests; the next
+    /// refresh continues where this one stopped.
+    public static let historyInstanceCap = 50
+
+    public func needsHistory(_ appleID: String) -> Bool {
+        entry(appleID)?.historyImportedAt == nil
+    }
+
+    /// Instances not yet imported for this app, capped, **in the order given**.
+    ///
+    /// Instance IDs are opaque, so the caller orders them — oldest processing date first, because
+    /// the point of the import is the past: a run that stops at the cap should have extended the
+    /// history rather than re-fetched days the ongoing request already covers.
+    public func pendingHistoryInstances(_ available: [String], for appleID: String) -> [String] {
+        let done = Set(entry(appleID)?.historyInstanceIDs ?? [])
+        return Array(available.filter { !done.contains($0) }.prefix(Self.historyInstanceCap))
+    }
+
+    public func recordHistoryInstances(_ ids: [String], for appleID: String) {
+        update(appleID) { entry in
+            entry.historyInstanceIDs = Array(Set(entry.historyInstanceIDs ?? []).union(ids)).sorted()
+        }
+    }
+
+    public func markHistoryImported(_ appleID: String, now: Date = Date()) {
+        update(appleID) { entry in entry.historyImportedAt = now }
+    }
+
+    /// Reads, changes and writes one app's entry, creating an empty one if this app has no file
+    /// yet — the history flags have to survive an app whose engagement hasn't arrived.
+    private func update(_ appleID: String, _ change: (inout Entry) -> Void) {
+        guard let url = url(for: appleID) else { return }
+        var entry = self.entry(appleID) ?? Entry(days: [], fetchedAt: .distantPast)
+        change(&entry)
+        write(entry, to: url)
+    }
+
+    private func write(_ entry: Entry, to url: URL) {
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(entry).write(to: url, options: .atomic)
+        } catch {
+            // Same bargain as `save`: a cache that can't be written is a slower app, not a wrong one.
+        }
     }
 
     /// Merges fresh days into whatever is already cached, newest data winning per date.
@@ -106,7 +166,13 @@ public struct AnalyticsStore {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(Entry(days: days, fetchedAt: now)).write(to: url, options: .atomic)
+            // History flags are carried over: a merge is not an import, and dropping them here
+            // would re-import an app's whole history on every refresh.
+            let existing = entry(appleID)
+            try encoder.encode(Entry(days: days, fetchedAt: now,
+                                     historyInstanceIDs: existing?.historyInstanceIDs,
+                                     historyImportedAt: existing?.historyImportedAt))
+                .write(to: url, options: .atomic)
             return true
         } catch {
             return false

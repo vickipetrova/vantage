@@ -73,6 +73,8 @@ Two targets, one seam. **`VantageCore` imports Foundation only** — no AppKit. 
 | `Sources/VantageCore/ASCAnalyticsClient.swift` | The four-step analytics lifecycle |
 | `Sources/VantageCore/SegmentParser.swift` | Gzipped TSV → `EngagementDay` |
 | `Sources/VantageCore/AnalyticsStore.swift` | Merging archive, and how many instances a refresh needs |
+| `Sources/VantageCore/EngagementSummary.swift` | Impressions, page views and conversion for the days on screen |
+| `Sources/VantageCore/EngagementState.swift` | Why there are no engagement figures, in one note |
 | `Sources/VantageCore/AppIcons.swift` | App icons from Apple's public storefront lookup |
 | `Sources/VantageCore/CacheQuery.swift` | Read-only answers about the cache, for the CLI and MCP |
 | `Sources/VantageCore/QueryRange.swift` | Any span of days the CLI and MCP ask for — parsed strictly, resolved against the cache |
@@ -203,7 +205,7 @@ app. That's why they're fetched when the section is opened and never from the po
 ## Reply drafts
 
 The composer's **Draft** button uses Apple's on-device model through `FoundationModels`. No network
-request, no key. The spec is `docs/superpowers/specs/2026-09-16-ai-reply-drafts-design.md`.
+request, no key.
 
 - **`VantageIntelligence` is the only target that imports `FoundationModels`**, inside
   `#if canImport`, `@available(macOS 26, *)`. It's weak-linked, so 13–15 launch. `VantageCore`
@@ -240,6 +242,14 @@ segments, download each from a pre-signed S3 URL that expires in **five minutes*
 Three things that bite:
 
 - **`processingDate` is not the date the data describes.** The rows carry their own `Date` column.
+- **An `ONGOING` request only produces days from its own creation onwards.** Verified against the
+  live API on 2026-09-17: a three-day-old request had exactly one daily instance, and the panel
+  showed three days. Everything older is reachable only through a **`ONE_TIME_SNAPSHOT`** request,
+  which Apple accepts alongside the ongoing one for the same app. `PanelModel.importHistory` asks
+  for one per app on first refresh, imports `AnalyticsStore.historyInstanceCap` instances per
+  refresh until none are left, then marks the app done and never reads it again. A snapshot takes
+  the same 24–48 hours to generate, so the first answer is an empty list, and every failure here is
+  silent — the daily analytics carry on unchanged.
 - **Instances are kept 35 days.** `AnalyticsStore` merges rather than replaces, so older days exist
   only in Vantage's copy. Each refresh asks for as many instances as the gap since the last one
   needs (`AnalyticsStore.instancesNeeded`), capped at those 35 — a fixed count silently abandons
@@ -254,6 +264,10 @@ Three things that bite:
 - **Swift treats `\r\n` as one `Character`**, so `split(separator: "\n")` never matches it.
   Normalize line endings first, as `ReportParser` does. `SegmentParser` shipped with this wrong and
   a test caught it.
+- **Engagement lives on the Overview, not its own tab.** Impressions and page views are two more
+  `TrendSeries` cases, and the headline's third line is `EngagementSummary`. The "no key", "Apple is
+  preparing your first report" and error states are `EngagementState`, in Core, because deciding
+  them in a view is what let a hard failure read as a normal wait for a month.
 
 ## The report format
 
@@ -386,6 +400,23 @@ osascript -e 'tell application "System Events" to tell process "Vantage" \
 So panel changes are verified by eye. Build, open, look — in both light and dark. What *is* still
 automatable is everything in `VantageCore`, which is why the Overview's arithmetic lives there
 rather than in the view that displays it.
+
+## Specs and plans
+
+**`docs/superpowers/` is not committed.** The whole directory is in `.gitignore` and the files are
+kept locally. Specs and plans are working materials: imperative, dated, written against a codebase
+that then moves. Merged to `main` they become furniture — plausible, specific, stale, and sitting in
+a directory that looks like documentation, where the next reader, human or agent, takes them for a
+description of the present.
+
+What survives from one is **rewritten into `CLAUDE.md` or `docs/` in its own words**, next to what it
+describes, where it gets updated when that changes. That's what `REPORT_FORMAT.md` and
+`REVIEWS_API.md` are, and why neither reads like a plan. A design worth keeping is worth a paragraph
+here; nothing in this repo should ever point at a path under `docs/superpowers/`, because for anyone
+who clones it, that path doesn't exist.
+
+Write specs and plans where the skill puts them. Don't `git add` them, and don't remove the
+`.gitignore` entry to "fix" them not showing up in `git status`.
 
 ## Releasing
 

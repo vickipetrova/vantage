@@ -107,4 +107,44 @@ final class AppDetailModelTests: XCTestCase {
         let days = [day(yesterday, apps: [app("1", "Mine", ["USD": 1])])]
         XCTAssertTrue(build("1", days).summary.footnotes.contains { $0.contains("Report for") })
     }
+
+    // MARK: - Engagement
+
+    func testAnAppsHeadlineCarriesItsOwnEngagement() {
+        let days = [day(yesterday, apps: [app("1", "Mine", ["USD": 1]), app("2", "Theirs", ["USD": 1])])]
+        let engagement = ["1": [EngagementDay(date: yesterday, impressions: 340, pageViews: 12)],
+                          "2": [EngagementDay(date: yesterday, impressions: 999, pageViews: 99)]]
+        let model = AppDetailModel.build(
+            appleID: "1", days: days, rates: rates, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: engagement, now: now)
+
+        XCTAssertEqual(model.summary.headline?.engagement?.impressions, 340,
+                       "One app's figures, not the portfolio's")
+    }
+
+    func testAnAppWithNoEngagementGetsTheNote() {
+        let days = [day(yesterday, apps: [app("1", "Mine", ["USD": 1])])]
+        let model = AppDetailModel.build(
+            appleID: "1", days: days, rates: rates, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: [:], now: now)
+
+        XCTAssertNil(model.summary.headline?.engagement)
+        XCTAssertEqual(model.summary.headline?.engagementNote,
+                       "Impressions not available yet for these days")
+    }
+
+    /// The detail section is the Overview's arithmetic on one app, so the "no key, no promise"
+    /// rule has to reach it too — otherwise the same panel says two different things depending on
+    /// which card you clicked.
+    func testWithNoEngagementSourceAnAppsHeadlineSaysNothingAboutImpressions() {
+        let days = [day(yesterday, apps: [app("1", "Mine", ["USD": 1])])]
+        let model = AppDetailModel.build(
+            appleID: "1", days: days, rates: rates, error: nil, metrics: [.installs],
+            displayCurrency: "USD", span: OverviewModel.Span(title: "Yesterday", length: 1),
+            engagement: [:], hasEngagementSource: false, now: now)
+
+        XCTAssertNil(model.summary.headline?.engagementNote)
+    }
 }

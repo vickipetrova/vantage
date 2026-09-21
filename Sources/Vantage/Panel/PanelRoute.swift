@@ -11,11 +11,10 @@ enum PanelRoute: Hashable {
     /// selection variable so back-navigation can't leave a stale app on screen.
     case appDetail(appleID: String)
     case reviews
-    case analytics
 
     /// The rail's items, in order. `appDetail` is absent on purpose: it's reached by clicking an
     /// app, not by picking a section, and a rail slot for it would be dead until one is chosen.
-    static let railOrder: [PanelRoute] = [.overview, .reviews, .analytics]
+    static let railOrder: [PanelRoute] = [.overview, .reviews]
 
     /// Which rail item lights up. App detail belongs to Overview — that's where you came from and
     /// where Back goes.
@@ -31,7 +30,6 @@ enum PanelRoute: Hashable {
         switch self {
         case .overview, .appDetail: return "square.grid.2x2"
         case .reviews: return "star.bubble"
-        case .analytics: return "chart.line.uptrend.xyaxis"
         }
     }
 
@@ -40,7 +38,6 @@ enum PanelRoute: Hashable {
         case .overview: return "Overview"
         case .appDetail: return "App"
         case .reviews: return "Reviews"
-        case .analytics: return "Analytics"
         }
     }
 
@@ -49,7 +46,7 @@ enum PanelRoute: Hashable {
         switch self {
         case .overview:
             return CGSize(width: 400, height: 480)
-        case .appDetail, .reviews, .analytics:
+        case .appDetail, .reviews:
             return CGSize(width: 680, height: 600)
         }
     }
