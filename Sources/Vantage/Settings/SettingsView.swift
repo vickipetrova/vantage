@@ -49,20 +49,21 @@ private struct ConnectionTab: View {
             } header: {
                 Text("Credentials")
             } footer: {
+                // `.foregroundColor` is set on the prose alone, never on a container that also
+                // holds a control. Set on the enclosing stack it propagates down and beats both
+                // `.buttonStyle(.link)`'s tint and `Link`'s, which rendered this link as grey
+                // caption text indistinguishable from the sentence above it — a control that
+                // doesn't look like one.
                 VStack(alignment: .leading, spacing: 6) {
                     // Where each value lives is the walkthrough's job now. Repeating it here would
                     // be two copies of the same instructions drifting apart.
                     Text("The first three come from one App Store Connect key; the Vendor Number "
                          + "is on a different page. The walkthrough finds all four.")
-                    HStack(spacing: 12) {
-                        Button("Run setup again…") { model.onRunSetup?() }
-                            .buttonStyle(.link)
-                        Link("How to create an API key…",
-                             destination: URL(string: "https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api")!)
-                    }
+                        .foregroundColor(.secondary)
+                    Link("How to create an API key…",
+                         destination: URL(string: "https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api")!)
                 }
                 .font(.caption)
-                .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -72,6 +73,14 @@ private struct ConnectionTab: View {
                         .keyboardShortcut(.defaultAction)
                     Button(model.isTesting ? "Testing…" : "Test connection") { model.runTest() }
                         .disabled(model.isTesting)
+                    Spacer(minLength: 0)
+                }
+                // Starting over, and throwing it away. Both are ordinary bordered buttons here
+                // rather than links in the footer above: a Section footer is prose you read, so a
+                // control living there is fighting its container — and this is where someone looks
+                // for something to press.
+                HStack(spacing: 8) {
+                    Button("Run setup again…") { model.onRunSetup?() }
                     Spacer(minLength: 0)
                     Button("Forget credentials") { model.forget() }
                 }
