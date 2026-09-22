@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panelModel = PanelModel()
     private lazy var panel = PanelController(model: panelModel)
     private let settingsWindow = SettingsWindow()
+    private let setupWindow = SetupWindow()
     private let store = ReportStore()
     private let fx = FX()
     private let backfill: Backfill
@@ -43,15 +44,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItemController.onWillShowMenu = { [weak self] in self?.panel.close() }
 
         panelModel.onRefresh = { [weak self] in self?.refresh(userInitiated: true) }
-        panelModel.onSettings = { [weak self] in self?.settingsWindow.show() }
+        // Whichever window can actually help. Someone who has never set up gets the walkthrough;
+        // someone who skipped it, or who pressed Forget credentials, gets the form back.
+        panelModel.onSettings = { [weak self] in self?.openSetupOrSettings() }
         panelModel.onMetricsChanged = { [weak self] in self?.render() }
         settingsWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
         settingsWindow.onPreferencesChanged = { [weak self] in self?.preferencesChanged() }
         settingsWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
         // Not user-initiated: a wider window should fill in, not re-ask about assumed zeros.
         settingsWindow.onHistoryChanged = { [weak self] in self?.refresh(userInitiated: false) }
+        settingsWindow.onRunSetup = { [weak self] in self?.setupWindow.show() }
         settingsWindow.unpricedCurrencies = { [weak self] in self?.unpricedCurrencies() ?? [] }
         settingsWindow.testConnection = { [weak self] completion in
+            self?.testConnection(completion) }
+        setupWindow.onCredentialsChanged = { [weak self] in self?.refresh(userInitiated: true) }
+        setupWindow.onReviewsKeyChanged = { [weak self] in self?.panelModel.reviewsKeyChanged() }
+        // Skip means "I'd rather paste them myself" — so hand over the form, don't just close.
+        setupWindow.onSkipped = { [weak self] in self?.settingsWindow.show() }
+        setupWindow.testConnection = { [weak self] completion in
             self?.testConnection(completion) }
 
         Notifier.requestAuthorizationIfNeeded()
@@ -60,33 +70,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rates = fx.cached()?.applying(manualRates: Prefs.manualRates)
         reloadCache()
 
-        // Registered before the credentials guard: a first-launch user who sets up credentials in
-        // the window this guard opens would otherwise get no wake refresh for the whole session.
+        // Registered before the switch below: two of its branches return early, opening a window
+        // instead of fetching, and a first-launch user who sets up credentials in whichever one
+        // opens would otherwise get no wake refresh for the whole session.
         //
         // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
         // window it slept through. Ask again the moment it wakes.
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
 
-        guard KeychainStore.hasCredentials else {
-            // First launch: nothing to show and nothing to fetch, so open the one window that
-            // fixes that rather than sitting there displaying a dash.
+        switch SetupGate.destination(hasCredentials: KeychainStore.hasCredentials,
+                                     setupCompleted: Prefs.setupCompleted) {
+        case .normalLaunch:
+            // Anyone launching with working credentials has already done this, whenever and
+            // however. Recording it here is the migration: a later Forget credentials then
+            // returns them to Settings rather than to step one of a walkthrough.
+            Prefs.setupCompleted = true
+
+        case .wizard:
+            // Nothing to show and nothing to fetch, and no evidence they've seen this before.
+            statusItemController.showNoCredentials()
+            panelModel.showNoCredentials()
+            setupWindow.show()
+            return
+
+        case .settings:
+            // They skipped the walkthrough, or they pressed Forget credentials. They know what an
+            // Issuer ID is; the form is faster for them than eleven screens.
             statusItemController.showNoCredentials()
             panelModel.showNoCredentials()
             settingsWindow.show()
             return
         }
+
         render()
         refresh(userInitiated: false)
-
-
-        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
-        // window it slept through. Ask again the moment it wakes.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
     }
 
     @objc private func didWake() { refresh(userInitiated: false) }
+
+    /// The same decision the launch guard makes, for every other way into setup.
+    private func openSetupOrSettings() {
+        switch SetupGate.destination(hasCredentials: KeychainStore.hasCredentials,
+                                     setupCompleted: Prefs.setupCompleted) {
+        case .wizard: setupWindow.show()
+        case .normalLaunch, .settings: settingsWindow.show()
+        }
+    }
 
     private func preferencesChanged() {
         Notifier.requestAuthorizationIfNeeded()
@@ -145,14 +175,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Fetching
 
     private func refresh(userInitiated: Bool) {
-        // Registered before the credentials guard: a first-launch user who sets up credentials in
-        // the window this guard opens would otherwise get no wake refresh for the whole session.
-        //
-        // Timers are unreliable across sleep — a Mac can wake hours later, well past a publication
-        // window it slept through. Ask again the moment it wakes.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
-
         guard KeychainStore.hasCredentials else {
             statusItemController.showNoCredentials()
             panelModel.showNoCredentials()

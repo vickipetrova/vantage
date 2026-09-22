@@ -31,6 +31,11 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         get { model.onReviewsKeyChanged } set { model.onReviewsKeyChanged = newValue }
     }
 
+    /// Reopens the first-run walkthrough.
+    var onRunSetup: (() -> Void)? {
+        get { model.onRunSetup } set { model.onRunSetup = newValue }
+    }
+
     /// Makes one real request and reports whether it worked. Injected rather than built here so
     /// this window stays a form and knows nothing about App Store Connect.
     var testConnection: ((@escaping (Result<Void, Error>) -> Void) -> Void)? {

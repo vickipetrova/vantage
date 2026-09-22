@@ -49,15 +49,21 @@ private struct ConnectionTab: View {
             } header: {
                 Text("Credentials")
             } footer: {
+                // `.foregroundColor` is set on the prose alone, never on a container that also
+                // holds a control. Set on the enclosing stack it propagates down and beats both
+                // `.buttonStyle(.link)`'s tint and `Link`'s, which rendered this link as grey
+                // caption text indistinguishable from the sentence above it — a control that
+                // doesn't look like one.
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("The Issuer ID and Key ID are both on Users and Access › Integrations — "
-                         + "the Issuer ID at the top, the Key ID beside your key's name. The "
-                         + "Vendor Number is under Payments and Financial Reports › Reports.")
+                    // Where each value lives is the walkthrough's job now. Repeating it here would
+                    // be two copies of the same instructions drifting apart.
+                    Text("The first three come from one App Store Connect key; the Vendor Number "
+                         + "is on a different page. The walkthrough finds all four.")
+                        .foregroundColor(.secondary)
                     Link("How to create an API key…",
                          destination: URL(string: "https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api")!)
                 }
                 .font(.caption)
-                .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -67,6 +73,14 @@ private struct ConnectionTab: View {
                         .keyboardShortcut(.defaultAction)
                     Button(model.isTesting ? "Testing…" : "Test connection") { model.runTest() }
                         .disabled(model.isTesting)
+                    Spacer(minLength: 0)
+                }
+                // Starting over, and throwing it away. Both are ordinary bordered buttons here
+                // rather than links in the footer above: a Section footer is prose you read, so a
+                // control living there is fighting its container — and this is where someone looks
+                // for something to press.
+                HStack(spacing: 8) {
+                    Button("Run setup again…") { model.onRunSetup?() }
                     Spacer(minLength: 0)
                     Button("Forget credentials") { model.forget() }
                 }
@@ -78,29 +92,6 @@ private struct ConnectionTab: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            // Belongs here rather than in General: it is a question about the credentials above,
-            // and this is the pane that opens by itself on first launch, so it's the closest thing
-            // to an onboarding step until the first-run walkthrough in CLAUDE.md exists.
-            Section {
-                Toggle("Stay unlocked while Vantage is running", isOn: $model.rememberCredentials)
-            } header: {
-                Text("Keychain")
-            } footer: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("On, macOS asks for your password once per launch and Vantage keeps the "
-                         + "credentials in memory until you quit. Off, every request reads the "
-                         + "Keychain again, so a key never outlives the request that used it — "
-                         + "more private, and more prompts.")
-                    Text("Either way your credentials live in one Keychain item, so it is one "
-                         + "prompt rather than one per value. Choosing Always Allow stops the "
-                         + "prompts entirely — though not for a build from source, whose signature "
-                         + "changes every time it is rebuilt.")
-                }
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)
@@ -134,15 +125,13 @@ private struct ReviewsTab: View {
             } header: {
                 Text("Reviews & Analytics key — optional")
             } footer: {
-                Text("One key reads both your reviews and the engagement figures on the "
-                     + "Overview. The Sales and "
-                     + "Reports key above can't read either — Apple gates them behind different "
-                     + "roles — and giving that key a bigger role would widen what it could do "
-                     + "with your sales data.\n\n"
-                     + "App Manager is enough to read reviews. Analytics needs Admin, because "
-                     + "Apple requires an Admin key to start generating a report — and its first "
-                     + "report arrives 24 to 48 hours later. Leave this blank if you only want "
-                     + "sales.")
+                Text("One key reads both your reviews and the engagement figures on the Overview. "
+                     + "The Sales and Reports key above can't read either — Apple gates them "
+                     + "behind different roles — and giving that key a bigger role would widen "
+                     + "what it could do with your sales data.\n\n"
+                     + "App Manager reads reviews. Analytics needs Admin, because Apple requires "
+                     + "an Admin key to start generating a report, and its first one arrives 24 "
+                     + "to 48 hours later. Leave this blank if you only want sales.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -154,12 +143,11 @@ private struct ReviewsTab: View {
                 Text("Replying")
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Requires an Admin key, not the App Manager key above. An Admin key can "
-                         + "change pricing, submit and remove builds, manage users, and read your "
-                         + "financial reports.")
-                    Text("There is one reviews key, so switching this on means putting an Admin "
-                         + "key in the field above — and every routine review fetch will then "
-                         + "carry it too, not just the replies.")
+                    Text("There is one reviews key, so switching this on means the key above must "
+                         + "be an Admin one — and every routine review fetch will then carry it "
+                         + "too, not just the replies.")
+                    Text("An Admin key can change pricing, submit and remove builds, manage "
+                         + "users, and read your financial reports.")
                     Text("Nothing is ever published without you confirming the exact text first.")
                 }
                 .font(.caption)
@@ -214,6 +202,30 @@ private struct GeneralTab: View {
             }
 
             DataSection(model: model)
+
+            // Moved out of the Connection tab once the setup walkthrough existed. It lived there
+            // because that pane opened by itself on first launch and was the closest thing to an
+            // onboarding step; there's a real one now, and this is a privacy preference like the
+            // rest of this tab.
+            Section {
+                Toggle("Stay unlocked while Vantage is running", isOn: $model.rememberCredentials)
+            } header: {
+                Text("Keychain")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("On, macOS asks for your password once per launch and Vantage keeps the "
+                         + "credentials in memory until you quit. Off, every request reads the "
+                         + "Keychain again, so a key never outlives the request that used it — "
+                         + "more private, and more prompts.")
+                    Text("Either way your credentials live in one Keychain item, so it is one "
+                         + "prompt rather than one per value. Choosing Always Allow stops the "
+                         + "prompts entirely — though not for a build from source, whose signature "
+                         + "changes every time it is rebuilt.")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
 
             Section {
                 Picker("Menu bar shows", selection: $model.menuBarStyle) {

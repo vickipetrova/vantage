@@ -225,6 +225,34 @@ public enum SalesError: LocalizedError, Equatable {
     }
 }
 
+public extension SalesError {
+    /// The setup step most likely to be wrong, for the wizard's failure screen.
+    ///
+    /// `nil` means this isn't a credential problem — the wizard then offers "Try again" with no
+    /// Back, rather than sending the user to re-edit a value that was already correct.
+    var likelyStep: SetupStep? {
+        switch self {
+        // A 403 can mean two different things. The key might not have the right role — it was made
+        // wrong, and the only fix is a new key. But it can also mean the Paid Apps Agreement is
+        // unsigned. `errorDescription` already branches on this (checking for "agreement" in the
+        // detail) and directs the user to Business settings. A 403 user sent to recreate a key
+        // would revoke a working key and fail again, so an agreement-related 403 returns nil —
+        // the wizard offers Try again, and errorDescription says where to actually go.
+        case .forbidden(let detail):
+            if let detail, detail.range(of: "agreement", options: .caseInsensitive) != nil {
+                return nil
+            }
+            return .createKey
+        // Issuer ID, Key ID and .p8 have to come from the same key. Apple's 401 body doesn't say
+        // which is wrong, so the first of the three is where to start looking.
+        case .unauthorized, .noCredentials:
+            return .issuerID
+        case .rateLimited, .network, .badReport, .http:
+            return nil
+        }
+    }
+}
+
 /// Apple's `ErrorResponse` body, reduced to something safe to put on screen.
 ///
 /// Apple's `detail` strings are about the request, not the caller — but they can quote a parameter
